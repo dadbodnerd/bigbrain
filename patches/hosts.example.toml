@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 dadbodnerd
+# Example host list for patches/verify.py: for each machine, which TabbyAPI trees and exllamav3 venvs it has and which patch
+# each should (`applied`) or should not (`absent`) carry. Fake names and addresses. Copy this file, edit it, then:
+#
+#     python patches/verify.py --hosts patches/hosts.toml --all
+#
+# (or set `[patches] hosts = "patches/hosts.toml"` in site.toml, or $BIGBRAIN_PATCH_HOSTS). verify.py only READS: it prints the
+# upstream version it finds and every patch's --check state and reports each difference from this file; it never fixes one.
+#
+#   ssh     user@address, or a name from site.toml [hosts]. A machine with `local = true` is checked in-process instead (run
+#           verify.py on that machine; this is how a Windows PC without ssh is covered).
+#   dir     a TabbyAPI checkout (patches name their `applies_to = "tabbyapi"` in PINS.toml)
+#   venv    an exllamav3 venv (`applies_to = "exllamav3"`); `version` is what `exllamav3-*.dist-info` should say
+#   live    documentation only: whether something runs from that tree / venv right now
+
+[hosts.alpha]
+ssh = "bigbrain@10.0.0.11"
+
+[[hosts.alpha.tabbyapi]]
+dir = "~/tabbyAPI"
+live = true
+applied = ["failed_load", "lora", "auth_redact"]
+absent = ["close_stc", "windows_launcher"]
+
+[[hosts.alpha.exllamav3]]
+venv = "~/tabbyAPI/venv"
+version = "1.6.1+cu128.torch2.9.0"
+live = true
+applied = ["dflash2_tp"]
+
+[hosts.beta]
+ssh = "bigbrain@10.0.0.12"
+
+[[hosts.beta.tabbyapi]]
+dir = "~/tabbyAPI"
+live = true
+applied = ["failed_load", "auth_redact"]
+absent = ["lora", "close_stc", "windows_launcher"]
+
+[[hosts.beta.exllamav3]]
+venv = "~/tabbyAPI/venv161"
+version = "1.6.1"
+live = true
+absent = ["dflash2_tp"]
+
+[[hosts.beta.exllamav3]]
+venv = "~/tabbyAPI/venv162"
+version = "1.6.2+cu128.torch2.9.0"
+live = false                                                 # exllamav3 1.6.2: DFlash2-TP is built in, never patch it
+absent = ["dflash2_tp"]
+
+[hosts.gamma]
+local = true                                                 # run verify.py ON this Windows PC
+
+[[hosts.gamma.tabbyapi]]
+dir = 'C:\tabbyAPI'
+live = true
+applied = ["failed_load", "close_stc", "auth_redact", "windows_launcher"]
+absent = ["lora"]
+
+[[hosts.gamma.exllamav3]]
+venv = 'C:\tabbyAPI\venv'
+version = "1.6.0+cu128.torch2.9.0"
+live = true
+absent = ["dflash2_tp"]

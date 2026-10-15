@@ -1,0 +1,33 @@
+diff --git a/main.py b/main.py
+index 58693f9..c4f4ce4 100644
+--- a/main.py
++++ b/main.py
+@@ -150,13 +150,10 @@ def entrypoint(
+     signal.signal(signal.SIGINT, signal_handler)
+     signal.signal(signal.SIGTERM, signal_handler)
+ 
+-    if platform.system() == "Windows":
+-        from winloop import install
+-    else:
++    if platform.system() != "Windows":
+         from uvloop import install
+-
+-    # Set loop event policy
+-    install()
++        # Set loop event policy
++        install()
+ 
+     # Parse and override config from args
+     if args is None:
+diff --git a/start.bat b/start.bat
+index acbee45..13e9e8e 100644
+--- a/start.bat
++++ b/start.bat
+@@ -37,6 +37,6 @@ if exist "%CONDA_PREFIX%" (
+ )
+ 
+ :: Call the python script with batch args
+-call python start.py %*
++call python main.py %*
+ 
+ pause

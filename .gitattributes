@@ -1,0 +1,12 @@
+# One rule for every machine: LF in the repo and in every checkout. The nodes stage these files over ssh, and the
+# live head runs LF-normalised copies, so a CRLF checkout would change what a node hashes.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.safetensors binary
+# Diff and patch files are byte-exact test inputs and apply targets: never convert them.
+*.patch -text
+tests/fixtures/**/*.diff -text
+tests/fixtures/**/*.patch -text

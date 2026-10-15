@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 dadbodnerd
+# Upstream versions the patches were written against. Read by patches/verify.py (read-only: it reports a difference, it never
+# fixes one). Which machines carry which patch is NOT here: that is your site's business, in a hosts file
+# (patches/hosts.example.toml is the template; verify.py --hosts FILE, or [patches] hosts in site.toml).
+# When an upstream pin changes on purpose, change this file in the same step.
+schema = 1
+checked = "2026-10-14"
+
+# ── upstream ────────────────────────────────────────────────────────────────────────────────────────────────────────
+[upstream.tabbyapi]
+repo = "https://github.com/theroyallab/tabbyAPI"
+license = "AGPL-3.0"
+commit = "2fd6cc76203a66e13042daf7d76e5898b21c1ad8"        # 2026-10-06 "Config: Drop fallback port+1 and explicitly fail if requested port is unavailable. ..."
+note = "Every TabbyAPI tree these patches were written and checked against was at this one commit."
+
+[upstream.exllamav3]
+repo = "https://github.com/turboderp-org/exllamav3"
+license = "MIT"
+copyright = "Copyright (c) 2025 Turboderp"
+engine_range = ">=1.6.0,<1.7"                                # what the BigBrain engine imports (modules.attn.prepare_for_attn, cache.recurrent_util)
+
+# The DFlash2-TP patch's version gate. patches/exllamav3/dflash2_tp.py holds the same two numbers and REFUSES --apply outside
+# them; tests/patches/test_dflash2_tp.py fails if this table and the script disagree. exllamav3 1.6.2 has DFlash2 tensor parallel
+# BUILT IN (verified on a 1.6.2 venv): the patch must never be applied there, and --check says "built in, never patch".
+[upstream.exllamav3.dflash2_tp]
+apply_versions = ["1.6.0", "1.6.1"]
+built_in_from = "1.6.2"
+
+# ── the patches ─────────────────────────────────────────────────────────────────────────────────────────────────────
+# kind = "script": a patches/ script with --target DIR --check|--apply|--revert; kind = "patchfile": a unified diff for `git apply`.
+[patches.failed_load]
+kind = "script"
+path = "tabbyapi/failed_load.py"
+applies_to = "tabbyapi"
+files = ["common/model.py"]
+license = "AGPL-3.0-or-later (derivative of TabbyAPI)"
+summary = "a FAILED model load gives back everything it took (the ghost loads)"
+
+[patches.close_stc]
+kind = "script"
+path = "tabbyapi/close_stc.py"
+applies_to = "tabbyapi"
+files = ["common/model.py", "main.py (only with --stdio-limit)"]
+requires = ["failed_load"]
+license = "AGPL-3.0-or-later (derivative of TabbyAPI)"
+summary = "a failed load closes its safetensors streams (Windows 'Too many open files')"
+
+[patches.lora]
+kind = "script"
+path = "tabbyapi/lora.py"
+applies_to = "tabbyapi"
+files = ["backends/exllamav3/model.py"]
+license = "AGPL-3.0-or-later (derivative of TabbyAPI)"
+summary = "wire the ExLlamaV3 backend to exllamav3's LoRA support (not usable together with tensor parallel)"
+
+[patches.auth_redact]
+kind = "patchfile"
+path = "tabbyapi/auth_redact.patch"
+applies_to = "tabbyapi"
+files = ["common/auth.py"]
+license = "AGPL-3.0-or-later (derivative of TabbyAPI)"
+summary = "do not print the API and admin keys into the log at start-up (byte-identical to `git diff common/auth.py` of a patched tree)"
+
+[patches.windows_launcher]
+kind = "patchfile"
+path = "tabbyapi/windows_launcher.patch"
+applies_to = "tabbyapi"
+files = ["main.py", "start.bat"]
+license = "AGPL-3.0-or-later (derivative of TabbyAPI)"
+summary = "Windows: no winloop, and start.bat runs main.py (cut from `git diff -- main.py start.bat` at the pinned commit)"
+
+[patches.dflash2_tp]
+kind = "script"
+path = "exllamav3/dflash2_tp.py"
+applies_to = "exllamav3"
+files = ["model/model_tp_fn.py", "model/model_tp.py", "model/model.py", "modules/arch_specific/dflash2.py", "architecture/dflash2.py", "generator/generator.py"]
+license = "MIT, with the exllamav3 notice in patches/NOTICE.md (the patch embeds excerpts of exllamav3)"
+summary = "DFlash2 speculative decoding against a tensor-parallel target (top-k merged across the LM-head shards)"

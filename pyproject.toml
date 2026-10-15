@@ -1,0 +1,25 @@
+# Metadata and pytest configuration ONLY. Nothing is installed from this file in v0.1.x: the engine is staged to the GPU nodes as
+# plain files (the controller's stage_package, or deploy/release.py) and run with `python -m tools.bigbrain.<module>` from a
+# checkout. There is deliberately no [build-system]: a `pip install .` would put a top-level `tools` distribution into
+# site-packages, next to whatever `tools` package your other projects have. A rename to a top-level `bigbrain` package, and with
+# it real packaging, is future work (see "Status and limitations" in README.md).
+[project]
+name = "bigbrain-engine"
+version = "0.1.1"
+description = "BigBrain: pipeline-parallel serving of one model across several GPUs and PCs, on exllamav3"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = ["numpy", "jinja2"]
+
+[project.optional-dependencies]
+# GPU nodes only. The engine imports exllamav3's internals (modules.attn.prepare_for_attn, cache.recurrent_util),
+# so the version is pinned to the 1.6 line; torch is whatever build matches your exllamav3 and CUDA.
+gpu = ["exllamav3>=1.6.0,<1.7", "torch"]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# the repo root (for `tools.bigbrain`, a PEP 420 namespace package: there is NO tools/__init__.py) and tests/ (the shared fakes)
+pythonpath = [".", "tests"]
+addopts = "-p no:cacheprovider"

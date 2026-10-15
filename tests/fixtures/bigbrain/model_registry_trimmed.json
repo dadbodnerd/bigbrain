@@ -1,0 +1,296 @@
+{
+ "version": 1,
+ "_seed": "Trimmed registry for the tests: fake names and addresses, three nodes, four models.",
+ "nodes": {
+  "alpha": {
+   "host": "10.0.0.11",
+   "aliases": [
+    "ALPHA_PC"
+   ],
+   "user": "bigbrain",
+   "python": "/opt/venvs/alpha/bin/python",
+   "model_root": "/data/models",
+   "launch": true,
+   "link_mb_s": 110,
+   "loopback_mb_s": 2000,
+   "gpus": [
+    {
+     "index": 0,
+     "name": "NVIDIA GeForce RTX 3090",
+     "total_mib": 24576,
+     "card_key": "ALPHA_GPU0",
+     "card_keys": [
+      "ALPHA_GPU0",
+      "ALPHA"
+     ]
+    },
+    {
+     "index": 1,
+     "name": "NVIDIA GeForce RTX 3090",
+     "total_mib": 24576,
+     "card_key": "ALPHA_GPU1",
+     "card_keys": [
+      "ALPHA_GPU1",
+      "ALPHA"
+     ]
+    }
+   ],
+   "nvlink": [
+    [
+     0,
+     1
+    ]
+   ]
+  },
+  "beta": {
+   "host": "10.0.0.12",
+   "aliases": [
+    "BETA_PC"
+   ],
+   "user": "bigbrain",
+   "python": "/opt/venvs/beta/bin/python",
+   "model_root": "/srv/models",
+   "launch": true,
+   "link_mb_s": 110,
+   "loopback_mb_s": 2000,
+   "gpus": [
+    {
+     "index": 0,
+     "name": "NVIDIA GeForce RTX 5070",
+     "total_mib": 12227,
+     "card_key": "BETA_5070",
+     "card_keys": [
+      "BETA_5070"
+     ]
+    },
+    {
+     "index": 2,
+     "name": "NVIDIA GeForce RTX 3090",
+     "total_mib": 24576,
+     "card_key": "BETA_3090",
+     "card_keys": [
+      "BETA_3090"
+     ]
+    },
+    {
+     "index": 3,
+     "name": "NVIDIA GeForce RTX 3060",
+     "total_mib": 12288,
+     "card_key": "BETA_3060",
+     "card_keys": [
+      "BETA_3060"
+     ]
+    }
+   ],
+   "nvlink": []
+  },
+  "gamma": {
+   "host": "10.0.0.13",
+   "aliases": [
+    "GAMMA_PC"
+   ],
+   "user": "bigbrain",
+   "python": "",
+   "model_root": "C:\\models",
+   "launch": false,
+   "launch_blocker": "Windows, no ssh or remote-exec path for a worker",
+   "link_mb_s": 280,
+   "loopback_mb_s": 2000,
+   "gpus": [
+    {
+     "index": 0,
+     "name": "NVIDIA GeForce RTX 5070 Ti",
+     "total_mib": 16303,
+     "card_key": "GAMMA",
+     "card_keys": [
+      "GAMMA"
+     ]
+    }
+   ],
+   "nvlink": []
+  }
+ },
+ "models": {
+  "Qwen2.5-1.5B-Instruct-8bpw-exl3": {
+   "arch": "qwen2",
+   "bits": 8.0,
+   "size_gib": 1.821,
+   "kv_elements_per_token": 14336,
+   "layers": 28,
+   "hybrid": false,
+   "paths": {
+    "alpha": "/data/models/Qwen2.5-1.5B-Instruct-8bpw-exl3"
+   }
+  },
+  "gpt-oss-120b-4.0bpw-exl3": {
+   "arch": "gpt_oss",
+   "bits": 4.0,
+   "layers": 36,
+   "layer_types": [
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention",
+    "full_attention"
+   ],
+   "hidden_size": 2880,
+   "vocab_size": 201088,
+   "num_key_value_heads": 8,
+   "head_dim": 64,
+   "kv_elements_per_token": 18432,
+   "size_gib": 58.23,
+   "layer_mib": [
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646,
+    1613.646
+   ],
+   "embed_mib": 1104.609,
+   "head_mib": 423.828,
+   "other_mib": 0.0,
+   "hybrid": false,
+   "paths": {
+    "alpha": "/data/models/gpt-oss-120b-4.0bpw-exl3",
+    "beta": "/srv/models/gpt-oss-120b-4.0bpw-exl3"
+   },
+   "kv_sliding_elements_per_token": 18432,
+   "sliding_window": 128
+  },
+  "Mistral-Small-4-119B-4.03bpw-exl3": {
+   "arch": "mistral4",
+   "bits": 4.03,
+   "layers": 36,
+   "hidden_size": 4096,
+   "vocab_size": 131072,
+   "num_key_value_heads": 32,
+   "head_dim": 128,
+   "kv_elements_per_token": 294912,
+   "size_gib": 57.788,
+   "layer_mib": [
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724,
+    1581.724
+   ],
+   "embed_mib": 1024.0,
+   "head_mib": 384.266,
+   "other_mib": 817.246,
+   "hybrid": false,
+   "paths": {
+    "alpha": "/bulk/models/Mistral-Small-4-119B-4.03bpw-exl3",
+    "beta": "/home/bigbrain/bb_models/Mistral-Small-4-119B-4.03bpw-exl3"
+   }
+  },
+  "Gemma-2-9B-Instruct": {
+   "arch": "gemma2",
+   "bits": null,
+   "size_gib": 17.214,
+   "kv_elements_per_token": 86016,
+   "layers": null,
+   "hybrid": false,
+   "paths": {
+    "beta": "/srv/models/Gemma-2-9B-Instruct"
+   },
+   "kv_sliding_elements_per_token": 86016,
+   "sliding_window": 4096,
+   "missing_on": [
+    "beta"
+   ]
+  }
+ }
+}

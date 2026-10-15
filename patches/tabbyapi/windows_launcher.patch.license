@@ -1,0 +1,4 @@
+SPDX-License-Identifier: AGPL-3.0-or-later
+SPDX-FileCopyrightText: a modification of TabbyAPI (https://github.com/theroyallab/tabbyAPI, AGPL-3.0); see patches/NOTICE.md
+
+(REUSE sidecar: this .patch file is a plain `git diff`, kept byte-exact so it applies cleanly, so the tag lives beside it, not in it.)

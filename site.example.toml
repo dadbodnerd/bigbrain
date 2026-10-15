@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 dadbodnerd
+#
+# BigBrain site configuration: everything that belongs to YOUR network and not to the engine. Fake values (10.0.0.x,
+# user "bigbrain"). Copy this file to site.toml in the directory you run BigBrain from, or point $BIGBRAIN_SITE at it, and edit
+# the copy. site.toml is git-ignored. Every key is optional; an unknown key is an error. CONFIGURATION.md describes each one.
+
+[ssh]
+# The ssh user for a node whose registry entry names none. Default: the local user name (what plain `ssh host` would use).
+user = "bigbrain"
+
+[registry]
+# The model registry (examples/model_registry.example.json shows the shape; tools/bigbrain/build_registry.py writes one by
+# measuring your PCs). A relative path is relative to this file. $BIGBRAIN_REGISTRY, when set, wins.
+path = "model_registry.json"
+
+# Short names for deploy/release.py --host and deploy/verify_stage.py --host (and for patches/hosts.toml `ssh = ...`), and the
+# node names build_registry.py gives machines it finds by address. `user` falls back to [ssh] user.
+[hosts.alpha]
+address = "10.0.0.11"
+
+[hosts.beta]
+address = "10.0.0.12"
+user = "bigbrain"
+
+# build_registry.py only, and only when you give it a --config servers file: how the TabbyAPI server NAMES in that file say which
+# GPU they live on. A server called ALPHA_GPU1 lives on nvidia-smi index 1; a server called BETA_3090 lives on the GPU whose
+# name contains "3090". (telemetry_index / telemetry_name_contains inside a server entry need no setting here.)
+[card_keys]
+index_prefixes = ["ALPHA_GPU"]
+name_prefixes = ["BETA_"]
+
+# `--split capacity` reads every card's free memory with nvidia-smi over ssh. To use your own reader instead (a function
+# `free_mib(registry, cards) -> {(host, gpu): MiB}` in a module on PYTHONPATH), name it here:
+# [capacity]
+# reader = "my_probe:free_mib"
+
+# The host list patches/verify.py checks (patches/hosts.example.toml is the template). A relative path is relative to this file.
+[patches]
+hosts = "patches/hosts.toml"

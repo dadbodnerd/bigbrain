@@ -1,0 +1,15 @@
+diff --git a/common/auth.py b/common/auth.py
+index 5808b7c..f4ace40 100644
+--- a/common/auth.py
++++ b/common/auth.py
+@@ -175,8 +175,8 @@ async def load_auth_keys(disable_from_config: bool):
+         _watch_task = asyncio.create_task(_watch_auth_file())
+ 
+     logger.info(
+-        f"Your API key is: {_format_api_keys(AUTH_KEYS)}\n"
+-        f"Your admin key is: {AUTH_KEYS.admin_key}\n"
++        f"Your API key is: <redacted - see api_tokens.yml>\n"
++        f"Your admin key is: <redacted - see api_tokens.yml>\n"
+         "If these keys get compromised, make sure to delete api_tokens.yml "
+         "and restart the server. Have fun!"
+     )

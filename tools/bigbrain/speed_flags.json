@@ -1,0 +1,14 @@
+{
+  "_comment": "Flag fragments for a launch script that starts the nodes itself (the controller builds these flags from --slots and --spec-draft instead). The script appends these to EVERY node's command ('slots' with {n} = the launch's slots) and passes --max-batch-size N itself, which the nodes also read as the slot count. 'draft' values are used verbatim (no {path} expansion): give the draft model folder as it is on node 0's host.",
+  "slots": "--slots {n}",
+  "slots_server_only": "",
+  "draft": {
+    "ngram": "--spec-draft ngram --spec-k 4",
+    "20b": "--spec-draft model --spec-k 4 --spec-model /opt/models/gpt-oss-20b-4.0bpw-exl3"
+  },
+  "draft_model_paths": {
+    "20b": {
+      "alpha": "/opt/models/gpt-oss-20b-4.0bpw-exl3"
+    }
+  }
+}

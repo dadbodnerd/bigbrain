@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# site-specific settings and registry DATA stay local: copy site.example.toml / the example registry and edit the copy
+/site.toml
+/model_registry.json
+/tools/bigbrain/model_registry.json
+/patches/hosts.toml
+
+# secrets and per-host state: never in this repo
+api_key
+*.env
+endpoint.env
+node.env
+node.args
+api_tokens.yml
+config.yml
+/config.json
+
+# run output and measurement dumps
+*.log
+*.npz
+results/
+runs/
+*.bak-*
+*.orig-*

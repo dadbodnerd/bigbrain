@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 dadbodnerd
+# One BigBrain node, as a systemd USER unit. The instance is the stage dir, path-escaped:
+#
+#   systemctl --user start "bigbrain-node@$(systemd-escape --path /tmp/bigbrain).service"
+#   systemctl --user stop  "bigbrain-node@...service"                    # TERM, then KILL after TimeoutStopSec; frees the VRAM
+#   journalctl --user -u "bigbrain-node@...service" -f
+#
+# The stage dir must hold node.args (and node.env with BB_PYTHON): see deploy/run_node.sh.
+#
+# DELIBERATELY not enabled anywhere: there is no [Install] section and Restart=no. A BigBrain node holds GPU memory; a node
+# that restarted on its own after a crash or a reboot would take that memory back without anyone knowing. A rebooted PC
+# hands its cards back, and that is the safe default. Add an [Install] section and Restart= yourself if you want otherwise.
+#
+# Install: deploy/release.py puts the code in ~/bigbrain/releases/<commit>/ and points ~/bigbrain/releases/current at it (the
+# paths below); copy this file to ~/.config/systemd/user/, systemctl --user daemon-reload. Running it after the user logs out needs
+# `loginctl enable-linger <user>` (a one-time root action) -- not done by this repo.
+[Unit]
+Description=BigBrain node (stage dir %I)
+Documentation=file:%h/bigbrain/releases/current/OPERATIONS.md
+
+[Service]
+Type=simple
+Restart=no
+# %I is the unescaped instance without its leading slash
+WorkingDirectory=/%I
+ExecStart=%h/bigbrain/releases/current/deploy/run_node.sh /%I
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=20
+# the node logs to the journal, not to node_<n>.log
+StandardOutput=journal
+StandardError=journal
