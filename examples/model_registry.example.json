@@ -1,6 +1,6 @@
 {
  "version": 1,
- "_seed": "Example registry: fake node names and addresses, real public model names. tools/bigbrain/build_registry.py writes the real one by measuring your PCs over ssh. CONFIGURATION.md describes every field.",
+ "_seed": "Example registry: fake node names and addresses, real public model names. `bigbrain-registry` (src/bigbrain/build_registry.py) writes the real one by measuring your PCs over ssh. CONFIGURATION.md describes every field.",
  "nodes": {
   "alpha": {
    "host": "10.0.0.11",

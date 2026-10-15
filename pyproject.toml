@@ -1,25 +1,89 @@
-# Metadata and pytest configuration ONLY. Nothing is installed from this file in v0.1.x: the engine is staged to the GPU nodes as
-# plain files (the controller's stage_package, or deploy/release.py) and run with `python -m tools.bigbrain.<module>` from a
-# checkout. There is deliberately no [build-system]: a `pip install .` would put a top-level `tools` distribution into
-# site-packages, next to whatever `tools` package your other projects have. A rename to a top-level `bigbrain` package, and with
-# it real packaging, is future work (see "Status and limitations" in README.md).
+[build-system]
+# setuptools >= 77 for the PEP 639 licence fields below (license = "MIT", license-files).
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "bigbrain-engine"
-version = "0.1.1"
-description = "BigBrain: pipeline-parallel serving of one model across several GPUs and PCs, on exllamav3"
+# NOTE on the name: "bigbrain" is already taken on PyPI (an unrelated 2020 project), so a PyPI upload would need another
+# DISTRIBUTION name, e.g. "bigbrain-llm" (free when this was checked). The import name stays `bigbrain` either way. From a git URL
+# (`pip install "git+https://github.com/dadbodnerd/bigbrain.git"`) the name below is the one pip shows and uninstalls.
+name = "bigbrain"
+dynamic = ["version"]          # read from src/bigbrain/__init__.py (__version__): the one place the version is written
+description = "Pipeline-parallel serving of one large model across several GPUs and PCs, on exllamav3"
 readme = "README.md"
-license = { text = "MIT" }
-requires-python = ">=3.11"
-dependencies = ["numpy", "jinja2"]
+requires-python = ">=3.11"     # site.py uses tomllib (3.11+); the suite is run on 3.11 and 3.14, the live nodes on 3.12
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["llm", "inference", "exllamav3", "pipeline-parallel", "multi-gpu", "openai-compatible", "cluster"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Distributed Computing",
+]
+# Only what the package imports without a GPU: numpy (the wire protocol and the engine) and jinja2 (the chat template of the
+# endpoint). torch and exllamav3 are imported lazily, inside the node code, so they are the optional `gpu` extra below.
+dependencies = [
+    "numpy",
+    "jinja2",
+]
 
 [project.optional-dependencies]
-# GPU nodes only. The engine imports exllamav3's internals (modules.attn.prepare_for_attn, cache.recurrent_util),
-# so the version is pinned to the 1.6 line; torch is whatever build matches your exllamav3 and CUDA.
-gpu = ["exllamav3>=1.6.0,<1.7", "torch"]
-test = ["pytest"]
+# GPU nodes only. The engine imports exllamav3's internals (modules.attn.prepare_for_attn, cache.recurrent_util), so exllamav3 is
+# pinned to the 1.6 line. NOTE: the exllamav3 package on PyPI has NO prebuilt CUDA extension -- it compiles one (needs the CUDA
+# toolkit and a C++ compiler) -- and torch must be the build that matches your driver. On a GPU node, install torch and an exllamav3
+# wheel from https://github.com/turboderp-org/exllamav3/releases FIRST, then this package; INSTALL.md has the commands.
+gpu = [
+    "exllamav3>=1.6.0,<1.7",
+    "torch",
+]
+dev = [
+    "pytest",
+    "build",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/dadbodnerd/bigbrain"
+Documentation = "https://github.com/dadbodnerd/bigbrain/blob/main/README.md"
+Source = "https://github.com/dadbodnerd/bigbrain"
+Issues = "https://github.com/dadbodnerd/bigbrain/issues"
+
+# One command per user-facing entry point. Each is `python -m bigbrain.<module>` under another name and takes --help.
+[project.scripts]
+bigbrain-controller = "bigbrain.controller:main"      # plan a cluster and (--execute) stage and start it over ssh
+bigbrain-registry = "bigbrain.build_registry:main"    # measure the GPU PCs and write model_registry.json
+bigbrain-merge-models = "bigbrain.merge_models:main"  # add measured models to a registry without touching the rest
+bigbrain-node = "bigbrain.worker:main"                # one pipeline node (with --http-port: node 0, the OpenAI endpoint)
+bigbrain-server = "bigbrain.server:main"              # node 0 as the OpenAI-compatible endpoint, explicitly
+bigbrain-bench = "bigbrain.bench:main"                # speed grid and parity proof against a running server
+bigbrain-parity = "bigbrain.parity_check:main"        # pipeline vs one-GPU reference
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = { attr = "bigbrain.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# a data file a custom launch script reads (CONFIGURATION.md); model_registry.json is site data and never goes in a package
+bigbrain = ["speed_flags.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# the repo root (for `tools.bigbrain`, a PEP 420 namespace package: there is NO tools/__init__.py) and tests/ (the shared fakes)
-pythonpath = [".", "tests"]
+# tests/ holds the shared fakes (bigbrain_speed_fakes.py ...). `bigbrain` itself comes from the environment (pip install -e ".[dev]",
+# or a wheel), or from src/ in a bare checkout: see tests/conftest.py.
+pythonpath = ["tests"]
 addopts = "-p no:cacheprovider"

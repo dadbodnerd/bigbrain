@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/registry.py -- which model is on which PC, and which GPUs each PC has.
+"""bigbrain/registry.py -- which model is on which PC, and which GPUs each PC has.
 
 model_registry.json is the one place BigBrain looks up. WHERE it is read from, in this order:
   1. $BIGBRAIN_REGISTRY, when set (manual CLI runs can also pass --registry);
-  2. site.toml's [registry] path (tools/bigbrain/site.py), when set;
+  2. site.toml's [registry] path (bigbrain/site.py), when set;
   3. the file beside this module, when there is one (a dev checkout may keep a copy there; it is git-ignored);
   4. otherwise RegistryError, naming the variable. A release dir (deploy/release.py) is read-only and never holds
      data, so a forgotten setting fails loudly instead of reading some stale copy.
@@ -21,7 +21,7 @@ What it holds:
            KV elements per token, per-layer MiB when measured, and the folder's
            path on every PC that has it (`paths`, keyed by node name).
 
-tools/bigbrain/build_registry.py measures all of it over ssh (read-only) and
+bigbrain/build_registry.py measures all of it over ssh (read-only) and
 rewrites the file. Everything here is pure: no ssh, no network.
 
 Hosts are accepted three ways everywhere: the node name ("alpha"), its address
@@ -83,8 +83,8 @@ def load(p: Union[str, Path, None] = None) -> dict:
         if not explicit and not os.environ.get(ENV_PATH) and site.registry_path() is None:
             raise RegistryError(f"no BigBrain registry: set {ENV_PATH} to a model_registry.json, or [registry] path in "
                                 f"site.toml (nothing at {p} either; a sample is examples/model_registry.example.json, "
-                                f"build_registry.py --write makes one)") from None
-        raise RegistryError(f"{p} does not exist -- run tools/bigbrain/build_registry.py --write") from None
+                                f"`bigbrain-registry --write` makes one)") from None
+        raise RegistryError(f"{p} does not exist -- run `bigbrain-registry --write` (python -m bigbrain.build_registry)") from None
     except (OSError, ValueError) as e:
         raise RegistryError(f"{p} is unreadable ({type(e).__name__}: {e})") from None
     if not isinstance(data, dict) or not isinstance(data.get("nodes"), dict) \

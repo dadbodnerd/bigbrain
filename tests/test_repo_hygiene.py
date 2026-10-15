@@ -1,29 +1,39 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""Rules about the repository itself: no tools/__init__.py, no secret-bearing files, LF everywhere,
+"""Rules about the repository itself: the one top-level package is src/bigbrain, no secret-bearing files, LF everywhere,
 and every file the controller stages to a node is really in the tree."""
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".venv", "node_modules"}
+SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".venv", "node_modules", "build", "dist", ".eggs"}
 
 #: files the repo must never hold (.gitignore + this test)
 FORBIDDEN_NAMES = {"api_key", "endpoint.env", "node.env", "api_tokens.yml", "config.yml", ".env"}
 CRLF_OK = {".bat", ".cmd", ".ps1", ".patch", ".diff"}
+GENERATED_BY_SDIST = {"PKG-INFO", "setup.cfg"}        # written by setuptools into an sdist, with the build machine's line endings
+
+#: patches/ is repo-only (not in the wheel, left out of the sdist: other licences), so what is said about it is checked only where it exists
+needs_patches = pytest.mark.skipif(not (ROOT / "patches").is_dir(), reason="patches/ is not in an sdist (repo-only tooling)")
 
 
 def _files():
     for p in ROOT.rglob("*"):
-        if p.is_file() and not (SKIP_DIRS & set(p.relative_to(ROOT).parts)):
+        parts = p.relative_to(ROOT).parts
+        if p.is_file() and not (SKIP_DIRS & set(parts)) and not any(x.endswith(".egg-info") for x in parts):
             yield p
 
 
-def test_there_is_no_tools___init__():
-    """tools/bigbrain is a PEP 420 namespace portion: another project may own `tools`, and two regular packages of that name
-    would shadow each other without an error. The controller creates tools/__init__.py itself on the GPU nodes."""
-    assert not (ROOT / "tools" / "__init__.py").exists()
-    assert (ROOT / "tools" / "bigbrain" / "__init__.py").exists()
+def test_the_only_top_level_package_is_bigbrain():
+    """v0.2.0: a src layout with ONE importable top-level name, `bigbrain`. The old `tools` namespace package (which would have
+    collided with any other project's `tools`) is gone, and nothing in the repo may bring it back or add a second package."""
+    assert not (ROOT / "tools").exists()
+    assert (ROOT / "src" / "bigbrain" / "__init__.py").is_file()
+    assert not (ROOT / "src" / "__init__.py").exists()
+    assert [p.name for p in (ROOT / "src").iterdir() if p.is_dir() and p.name != "__pycache__"
+            and not p.name.endswith(".egg-info")] == ["bigbrain"]
 
 
 def test_no_secret_bearing_file_is_in_the_tree():
@@ -34,7 +44,7 @@ def test_no_secret_bearing_file_is_in_the_tree():
 
 # split over two lines so this file does not itself look like it holds a key header
 _PRIVATE_KEY_PEM = (r"-----BEGIN [A-Z ]*"
-                    r"PRIVATE KEY-----")
+                    r"PRIVATE" r" KEY-----")
 
 
 def test_no_key_shaped_string_is_in_a_text_file():
@@ -55,20 +65,24 @@ def test_no_key_shaped_string_is_in_a_text_file():
 
 def test_every_text_file_is_lf_except_windows_scripts_and_patches():
     crlf = [str(p.relative_to(ROOT)) for p in _files()
-            if p.suffix not in CRLF_OK and b"\r\n" in p.read_bytes()]
+            if p.suffix not in CRLF_OK and p.name not in GENERATED_BY_SDIST and b"\r\n" in p.read_bytes()]
     assert not crlf, crlf
 
 
 def test_every_file_the_controller_stages_is_in_the_repo():
-    from tools.bigbrain.controller import PACKAGE_FILES
-    missing = [f for f in PACKAGE_FILES if f != "tools/__init__.py" and not (ROOT / f).exists()]
+    from bigbrain.controller import PACKAGE_FILES
+    missing = [f for f in PACKAGE_FILES if not (ROOT / "src" / f).exists()]       # staged as bigbrain/x.py, tracked as src/bigbrain/x.py
     assert not missing, missing
-    assert "tools/__init__.py" in PACKAGE_FILES          # synthesized on the node, never in the repo
+    assert all(f.startswith("bigbrain/") for f in PACKAGE_FILES) and len(PACKAGE_FILES) == 8
 
 
 def test_the_licence_stance_is_in_the_tree():
     lic = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert lic.startswith("MIT License") and "Copyright (c) 2026 dadbodnerd" in lic
+
+
+@needs_patches
+def test_the_patch_licences_are_in_the_tree():
     assert (ROOT / "patches" / "tabbyapi" / "LICENSE").read_text(encoding="utf-8").lstrip().startswith("GNU AFFERO GENERAL PUBLIC LICENSE")
     notice = (ROOT / "patches" / "NOTICE.md").read_text(encoding="utf-8")
     assert "Copyright (c) 2025 Turboderp" in notice and "AGPL-3.0" in notice and "MIT License" in notice
@@ -85,6 +99,7 @@ def test_no_upstream_source_is_vendored():
 
 
 # -- licence headers (v0.1.1) ----------------------------------------------------------------------------------------------------
+@needs_patches
 def test_every_tabbyapi_patch_file_carries_the_agpl_spdx_tag():
     d = ROOT / "patches" / "tabbyapi"
     seen = 0
@@ -103,6 +118,7 @@ def test_every_tabbyapi_patch_file_carries_the_agpl_spdx_tag():
     assert seen == 5                                           # failed_load close_stc lora auth_redact.patch windows_launcher.patch
 
 
+@needs_patches
 def test_every_exllamav3_patch_file_carries_the_mit_tag_and_the_turboderp_notice():
     files = sorted((ROOT / "patches" / "exllamav3").glob("*.py"))
     assert files
@@ -112,6 +128,7 @@ def test_every_exllamav3_patch_file_carries_the_mit_tag_and_the_turboderp_notice
         assert "Copyright (c) 2025 Turboderp" in head and "patches/NOTICE.md" in head, p.name
 
 
+@needs_patches
 def test_an_spdx_comment_does_not_displace_the_module_docstring():
     import ast
     for p in list((ROOT / "patches" / "tabbyapi").glob("*.py")) + list((ROOT / "patches" / "exllamav3").glob("*.py")):

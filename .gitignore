@@ -17,7 +17,7 @@ Thumbs.db
 # site-specific settings and registry DATA stay local: copy site.example.toml / the example registry and edit the copy
 /site.toml
 /model_registry.json
-/tools/bigbrain/model_registry.json
+/src/bigbrain/model_registry.json
 /patches/hosts.toml
 
 # secrets and per-host state: never in this repo

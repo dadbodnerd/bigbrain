@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/draft.py -- the draft model of draft-model speculation, and the
+"""bigbrain/draft.py -- the draft model of draft-model speculation, and the
 tokenizer-identity check that makes it legal.
 
 The draft model is a SMALL model (gpt-oss-20b for gpt-oss-120b) loaded WHOLE

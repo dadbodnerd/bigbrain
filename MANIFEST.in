@@ -1,0 +1,11 @@
+# What the SOURCE distribution (sdist) carries besides the package: the documentation, the examples, the deploy tooling and the
+# tests. patches/ is left OUT on purpose: it is repo-only tooling under other licences (AGPL-3.0-or-later for the TabbyAPI patches)
+# that the MIT package does not ship; its tests skip when the directory is absent.
+include LICENSE README.md INSTALL.md CONFIGURATION.md OPERATIONS.md ARCHITECTURE.md SECURITY.md
+include site.example.toml
+recursive-include docs *.md
+recursive-include examples *.json
+recursive-include deploy *.py *.sh *.service
+graft tests
+prune patches
+global-exclude __pycache__ *.py[cod] *.log *.npz

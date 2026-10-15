@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/bench.py against the in-process fake pipeline: the grid runs, every cell is
+"""bigbrain/bench.py against the in-process fake pipeline: the grid runs, every cell is
 checked against the plain run, and a deliberately corrupted cell is caught."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 from bigbrain_speed_fakes import V
 from bigbrain_speed_harness import KEY, pipes, served  # noqa: F401
-from tools.bigbrain import bench
+from bigbrain import bench
 
 PROMPTS = ["abcabcabdabcab", "jjijjijji", "a", "cdefghcdefgh", "bbbbbb"]
 
@@ -130,7 +130,7 @@ def test_the_documented_workflow_plain_single_sequence_server_then_batched_serve
     the old traffic) records plain.json; (B) a batched speculative server is checked against it."""
     _torch()
     from bigbrain_speed_harness import FakeWorkerEngine, make_node
-    from tools.bigbrain.server import BigBrainApp, serve_in_thread
+    from bigbrain.server import BigBrainApp, serve_in_thread
     node = make_node(__import__("bigbrain_speed_fakes").KINDS_MIXED, 0, 4, 0, 1, slots=1, max_draft=0)
 
     class _Plain(FakeWorkerEngine):

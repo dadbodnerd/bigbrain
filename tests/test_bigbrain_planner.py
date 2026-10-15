@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""The capacity-aware BigBrain planner (tools/bigbrain/controller.py).
+"""The capacity-aware BigBrain planner (bigbrain/controller.py).
 
 Layers are split across the chosen GPUs in proportion to each GPU's USABLE
 memory (free - headroom - the node's fixed costs), respecting non-uniform
@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.bigbrain import controller as ctl  # noqa: E402
+from bigbrain import controller as ctl  # noqa: E402
 
 MIB = 1024 * 1024
 
@@ -274,7 +274,7 @@ def test_cli_even_split_unchanged_for_model_dir():
 
 def test_cli_capacity_split_uses_injected_readings(tmp_path, monkeypatch):
     import json
-    from tools.bigbrain import registry as reg
+    from bigbrain import registry as reg
     p = tmp_path / "r.json"
     p.write_text(json.dumps({"version": 1, "nodes": {
         "a": {"host": "10.0.0.1", "launch": True, "python": "/pa", "model_root": "/m",

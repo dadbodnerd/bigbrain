@@ -3,9 +3,9 @@
 # Copyright (c) 2026 dadbodnerd
 """deploy/release.py -- put one commit of this repo on a host as an immutable release dir.
 
-    python deploy/release.py --commit v0.1.1 --host alpha --host beta      # names from site.toml [hosts], or user@address
-    python deploy/release.py --commit v0.1.1 --to-dir /tmp/releases           # a local directory instead of ssh (tests, dry runs)
-    python deploy/release.py --commit v0.1.1 --host alpha --dry-run          # say what would happen; touch nothing
+    python deploy/release.py --commit v0.2.0 --host alpha --host beta      # names from site.toml [hosts], or user@address
+    python deploy/release.py --commit v0.2.0 --to-dir /tmp/releases           # a local directory instead of ssh (tests, dry runs)
+    python deploy/release.py --commit v0.2.0 --host alpha --dry-run          # say what would happen; touch nothing
 
 What a release is: `git archive <commit>` extracted into <dest>/<first 12 hex of the commit>/ on the host, with a file
 BUILD holding the FULL commit hash, then made read-only (`chmod -R a-w`), then a symlink <dest>/current pointing at it.
@@ -20,6 +20,7 @@ Exit 0 = every target installed or already there; 1 = a target failed.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import io
 import os
 import shlex
@@ -30,8 +31,9 @@ import tarfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-from tools.bigbrain import site  # noqa: E402  (host names come from site.toml [hosts]; `user@address` is accepted as it is)
+if importlib.util.find_spec("bigbrain") is None:       # a bare checkout, nothing pip-installed: use this checkout's src/
+    sys.path.insert(0, str(REPO / "src"))
+from bigbrain import site  # noqa: E402  (host names come from site.toml [hosts]; `user@address` is accepted as it is)
 
 DEFAULT_DEST = "~/bigbrain/releases"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
@@ -129,7 +131,7 @@ def _rmtree(path: Path) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--commit", required=True, help="a commit, tag or branch of this repo (v0.1.1)")
+    ap.add_argument("--commit", required=True, help="a commit, tag or branch of this repo (v0.2.0)")
     ap.add_argument("--host", action="append", default=[],
                     help="a host: a name from site.toml [hosts], or user@address; repeatable")
     ap.add_argument("--to-dir", default=None, help="install into this local directory instead of over ssh")

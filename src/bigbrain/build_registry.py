@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/build_registry.py -- measure every GPU PC and (re)write model_registry.json.
+"""bigbrain/build_registry.py -- measure every GPU PC and (re)write model_registry.json.
 
 Read-only on the nodes: ONE `python3 -` over ssh per PC, which runs nvidia-smi
 (GPU index, name, total MiB, PCI bus; `topo -m` for NVLink pairs) and, for every
@@ -28,9 +28,9 @@ A PC found by address is named by site.toml's [hosts] (address -> name), else by
 Hand-set node fields survive a rebuild: python, user, aliases, launch,
 launch_blocker, link_mb_s, loopback_mb_s.
 
-    python -m tools.bigbrain.build_registry --node alpha=10.0.0.11:/data/models                    # dry run
-    python -m tools.bigbrain.build_registry --node alpha=10.0.0.11:/data/models --registry PATH --write
-    python -m tools.bigbrain.build_registry --config servers.json --write
+    python -m bigbrain.build_registry --node alpha=10.0.0.11:/data/models                    # dry run
+    python -m bigbrain.build_registry --node alpha=10.0.0.11:/data/models --registry PATH --write
+    python -m bigbrain.build_registry --config servers.json --write
 (--registry defaults to $BIGBRAIN_REGISTRY, then site.toml's [registry] path, then the file beside registry.py.)
 
 Run it where the ssh keys to the PCs are. Exit 0 = written / printed; 2 = no node could be measured.

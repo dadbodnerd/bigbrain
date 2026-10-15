@@ -1,4 +1,4 @@
-# The HTTP endpoint (node 0, `tools/bigbrain/server.py`)
+# The HTTP endpoint (node 0, `src/bigbrain/server.py`)
 
 What a client sees when it talks to node 0. The port is `--http-port` (the flag's default is 16890; the examples in these docs use 16980).
 A field may be **added** to any answer in later versions; none is renamed or removed within v0.1.x.

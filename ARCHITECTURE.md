@@ -1,7 +1,7 @@
 # BigBrain architecture
 
 How the pipeline works, what travels over the wire, how several sequences and speculation share it, and how the controller plans a
-split. Source references are to `tools/bigbrain/`.
+split. Source references are to `src/bigbrain/` (the `bigbrain` package).
 
 ## What it does
 
@@ -42,14 +42,14 @@ flowchart LR
 flowchart TB
     subgraph CTL ["Controller machine (any PC with ssh keys, no GPU)"]
         P["planner: registry and site.toml<br/>--split capacity or even"]
-        S["stage_package: 9 files"]
+        S["stage_package: 8 files"]
         L["launch: reverse rank order"]
         P --> S --> L
     end
-    S -.->|ssh stdin| D1["PC 1 stage dir: tools/bigbrain/*.py"]
-    S -.->|ssh stdin| D2["PC 2 stage dir: tools/bigbrain/*.py"]
-    L -.->|ssh: cd stage and python -m tools.bigbrain.worker| D1
-    L -.->|ssh: cd stage and python -m tools.bigbrain.worker| D2
+    S -.->|ssh stdin| D1["PC 1 stage dir: bigbrain/*.py"]
+    S -.->|ssh stdin| D2["PC 2 stage dir: bigbrain/*.py"]
+    L -.->|ssh: cd stage and python -m bigbrain.worker| D1
+    L -.->|ssh: cd stage and python -m bigbrain.worker| D2
 ```
 
 ## The slice-load core (`worker.py`)
@@ -151,7 +151,7 @@ nodes and N = 3..4 concurrent sequences x {no speculation, n-gram, draft model},
 single-sequence run and to a cache-free oracle. **Not provable without GPUs:** exllamav3's kernels are not promised batch-invariant, so a
 `(B, T)` forward may round a logit differently from a `(1, 1)` one and flip an argmax where the top two are within rounding. Byte-identity on
 real hardware is a MEASURED property: `bench.py` reports, per cell and per prompt, identical or the first divergent position with the plain run's
-logit margin there (`python -m tools.bigbrain.bench grid ...`, `compare before.json after.json`). In an early acceptance run (a 1.5B model with 28
+logit margin there (`bigbrain-bench grid ...`, `compare before.json after.json`). In an early acceptance run (a 1.5B model with 28
 layers on two nodes of one PC) the 256-token greedy output was byte-identical to the monolithic baseline, with a max logit difference of 0.0; each
 node held only its slice's weights and KV.
 
@@ -164,7 +164,7 @@ node held only its slice's weights and KV.
 - `controller.py`: `plan_auto` (even split), `plan_capacity` / `choose_gpus` (layers in proportion to each GPU's usable memory, embedding on node 0,
   lm_head on the last, KV only on attention layers, N slots and a draft model priced), `stage_package` (ships `PACKAGE_FILES` to each host over
   ssh stdin), `launch` (reverse rank order so listeners are up before connectors), `teardown_command` (signals every node, worker or server,
-  started with `-m tools.bigbrain.X` or with `-c "from tools.bigbrain import X ..."`, whose working directory is the stage dir), and the CLI.
+  started with `-m bigbrain.X` or with `-c "from bigbrain import X ..."`, whose working directory is the stage dir), and the CLI.
   `--split capacity` reads each card's free memory through `nvidia_smi_free_mib` (one read-only `nvidia-smi` per PC over ssh) or through a reader you name in `site.toml`.
 - `footprint.py`: `kv_shape`, the K+V elements one token adds to the cache for a given `config.json`. A lower bound by design: a missing field answers 0, never a guess.
 - `parity_check.py`: formal parity of a pipeline against the monolithic model (token-for-token and logit fidelity).

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/merge_models.py: add measured models to the registry and mark what is gone from disk, touching nothing else.
+"""bigbrain/merge_models.py: add measured models to the registry and mark what is gone from disk, touching nothing else.
 
     C:/Python314/python.exe -m pytest tests/test_bigbrain_merge_models.py -q -p no:cacheprovider
 """
@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.bigbrain import merge_models as mm  # noqa: E402
+from bigbrain import merge_models as mm  # noqa: E402
 
 
 def reg():
@@ -29,7 +29,7 @@ def test_models_are_added_and_missing_folders_marked_but_nothing_is_deleted_or_r
     assert new["models"]["New-4.0bpw"]["size_gib"] == 50.0 and new["models"]["Gone"]["missing_on"] == ["beta"]
     assert new["models"]["Gone"]["paths"] == {"beta": "/r/gone"}                       # kept, so the apps can say it is gone
     assert "missing_on" not in new["models"]["Old"] and new["nodes"] == old["nodes"] and new["_gpus_note"] == "pinned by uuid"
-    assert new["_models_refreshed"] == {"at": "T", "by": "tools/bigbrain/merge_models.py", "notes": ["n1"]}
+    assert new["_models_refreshed"] == {"at": "T", "by": "bigbrain/merge_models.py", "notes": ["n1"]}
     assert mm.validate(old, new) == [] and any("added New-4.0bpw" in r for r in report)
     assert old == reg()                                                                 # the input is not mutated
 

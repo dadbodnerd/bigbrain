@@ -22,7 +22,7 @@ desktop GPUs spread over two or three PCs on an ordinary 1 GbE LAN, running a 10
 - **Speculative decoding** for greedy requests: n-gram prompt lookup, or a small draft model on node 0.
 - **A capacity planner** that cuts the layers in proportion to each card's free memory, prices the KV cache for N slots, and
   refuses a plan that does not fit instead of starting one that will run out of memory.
-- **Plain-file deployment.** The engine is nine Python files that the controller copies to each node over ssh. No daemon, no
+- **Plain-file deployment.** The engine is eight Python files that the controller copies to each node over ssh. No daemon, no
   container, no cluster manager.
 - **Tested without a GPU.** The engine's logic runs against fake layers on CPU; the test suite needs no hardware.
 
@@ -35,7 +35,7 @@ Use it if you own several GPUs in more than one machine, you want to run a model
 and you are comfortable with ssh, a venv with exllamav3, and reading logs. **If the model fits on one GPU, run it on one GPU**:
 every extra node adds a network hop (measured below: five cards beat six).
 
-This is v0.1.1, an early release. Read [Status and limitations](#status-and-limitations) before you plan around it.
+This is v0.2.0, an early release (the first one you can `pip install`). Read [Status and limitations](#status-and-limitations) before you plan around it.
 
 ## Measured results
 
@@ -71,28 +71,49 @@ How to read it:
 
 ## Quick start
 
-You need Python 3.11+ on the machine you run the commands from, ssh keys to the GPU PCs, and an EXL3 model folder on each of them.
-[INSTALL.md](INSTALL.md) has the full walk-through; this is the short version.
+You need Python 3.11+ on the machine you run the commands from (the *controller machine*: no GPU needed), ssh keys to the GPU PCs, and an
+EXL3 model folder on each of them. [INSTALL.md](https://github.com/dadbodnerd/bigbrain/blob/main/INSTALL.md) has the full walk-through;
+this is the short version.
 
 ```bash
-git clone https://github.com/dadbodnerd/bigbrain && cd bigbrain
-python -m pytest -q                                   # no GPU needed: numpy, jinja2, pytest (torch is optional)
+pip install "git+https://github.com/dadbodnerd/bigbrain.git"              # or ...bigbrain.git@v0.2.0 to pin a release; installs numpy + jinja2
+bigbrain-controller --help                                                # every command takes --help (list below)
 
-cp site.example.toml site.toml                        # your ssh user and host names; see CONFIGURATION.md
-python -m tools.bigbrain.build_registry --write --registry model_registry.json \
+bigbrain-registry --write --registry model_registry.json \
     --node alpha=10.0.0.11:/data/models --node beta=10.0.0.12:/srv/models
-                                                      # measures the PCs over ssh (read-only) and writes the registry
-python -c "import secrets; print(secrets.token_hex(24))" > api_key     # the bearer key; keep this file private
+                                                                          # measures the PCs over ssh (read-only) and writes the registry
+export BIGBRAIN_REGISTRY="$PWD/model_registry.json"                       # or [registry] path in a site.toml (copy site.example.toml from a clone)
+python -c "import secrets; print(secrets.token_hex(24))" > api_key        # the bearer key; keep this file private
 
 # plan and print the exact commands, touch nothing (the default is a dry run):
-python -m tools.bigbrain.controller --model gpt-oss-120b-4.0bpw-exl3 --all-cards --hosts alpha,beta \
+bigbrain-controller --model gpt-oss-120b-4.0bpw-exl3 --all-cards --hosts alpha,beta \
     --max-num-tokens 16384 --slots 4 --serve-port 16980 --api-token "$(cat api_key)"
 # add --execute to stage the engine on the PCs and start the nodes
 ```
 
+The commands: `bigbrain-controller` (plan a cluster, stage and start it), `bigbrain-registry` (measure the PCs, write the registry),
+`bigbrain-merge-models` (add models to a registry), `bigbrain-bench` (speed grid and parity proof), `bigbrain-parity` (pipeline vs one GPU),
+`bigbrain-node` and `bigbrain-server` (one node by hand; the controller starts them for you). Each is also `python -m bigbrain.<module>`.
+
+Install variants:
+
+| you want | command |
+|---|---|
+| the controller and the tools (what the quick start uses) | `pip install "git+https://github.com/dadbodnerd/bigbrain.git"` |
+| a pinned release | `pip install "git+https://github.com/dadbodnerd/bigbrain.git@v0.2.0"` |
+| torch + exllamav3 in the same venv (a GPU PC) | `pip install "bigbrain[gpu] @ git+https://github.com/dadbodnerd/bigbrain.git"`, **after** installing torch and an exllamav3 wheel (below) |
+| the code and the tests | `git clone https://github.com/dadbodnerd/bigbrain && cd bigbrain && pip install -e ".[dev]" && python -m pytest -q` |
+
+**The `gpu` extra and exllamav3.** The GPU PCs do not need this package: the controller copies the engine files to them. They need an
+environment with exllamav3 (`>=1.6.0,<1.7`) and torch. The exllamav3 package on PyPI contains **no prebuilt CUDA extension**, so `pip install
+exllamav3` compiles one and needs the CUDA toolkit and a C++ compiler; the prebuilt wheels are on
+[exllamav3's GitHub releases](https://github.com/turboderp-org/exllamav3/releases) and must match your torch, CUDA and Python. Install torch
+(from pytorch.org, for your driver), then the matching exllamav3 wheel, and only then the `gpu` extra, which finds both already there. The
+commands are in INSTALL.md section 2.
+
 (`--all-cards` with `--model` cuts the layers in proportion to each card's free memory, which it reads with `nvidia-smi` over ssh,
-also in a dry run. `examples/model_registry.example.json` and `site.example.toml` show every field with fake values. The dry run
-prints the bearer key inside the node commands: see [SECURITY.md](SECURITY.md).)
+also in a dry run. `examples/model_registry.example.json` and `site.example.toml` in the repository show every field with fake values. The dry run
+prints the bearer key inside the node commands: see [SECURITY.md](https://github.com/dadbodnerd/bigbrain/blob/main/SECURITY.md).)
 
 Then talk to node 0:
 
@@ -107,23 +128,24 @@ curl http://10.0.0.11:16980/v1/chat/completions -H "Authorization: Bearer $(cat 
 
 | file | what it covers |
 |---|---|
-| [INSTALL.md](INSTALL.md) | requirements, preparing the PCs, configuring, a first run, stopping |
-| [CONFIGURATION.md](CONFIGURATION.md) | `site.toml`, the model registry, environment variables, the flags that matter |
-| [OPERATIONS.md](OPERATIONS.md) | running and stopping a cluster, health and metrics, releases, systemd, troubleshooting |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | how the pipeline, wire protocol, batching, speculation and the planner work |
-| [docs/API.md](docs/API.md) | the HTTP endpoint on node 0 |
-| [SECURITY.md](SECURITY.md) | what the bearer key does and does not protect; run it on a trusted LAN only |
-| [patches/README.md](patches/README.md) | the optional patches for upstream TabbyAPI and exllamav3 (separate licences) |
+| [INSTALL.md](https://github.com/dadbodnerd/bigbrain/blob/main/INSTALL.md) | requirements, preparing the PCs, configuring, a first run, stopping |
+| [CONFIGURATION.md](https://github.com/dadbodnerd/bigbrain/blob/main/CONFIGURATION.md) | `site.toml`, the model registry, environment variables, the flags that matter |
+| [OPERATIONS.md](https://github.com/dadbodnerd/bigbrain/blob/main/OPERATIONS.md) | running and stopping a cluster, health and metrics, releases, systemd, troubleshooting |
+| [ARCHITECTURE.md](https://github.com/dadbodnerd/bigbrain/blob/main/ARCHITECTURE.md) | how the pipeline, wire protocol, batching, speculation and the planner work |
+| [docs/API.md](https://github.com/dadbodnerd/bigbrain/blob/main/docs/API.md) | the HTTP endpoint on node 0 |
+| [SECURITY.md](https://github.com/dadbodnerd/bigbrain/blob/main/SECURITY.md) | what the bearer key does and does not protect; run it on a trusted LAN only |
+| [patches/README.md](https://github.com/dadbodnerd/bigbrain/blob/main/patches/README.md) | the optional patches for upstream TabbyAPI and exllamav3 (separate licences) |
 
 ## Status and limitations
 
-**v0.1.1 works on the author's cluster and is tested without hardware; it is not polished.** In particular:
+**v0.2.0 works on the author's cluster and is tested without hardware; it is not polished.** In particular:
 
-- **Not packaged.** There is no `pip install`. You run `python -m tools.bigbrain.<module>` from a checkout, and the controller
-  stages nine files to the nodes. The import name is `tools.bigbrain`, a PEP 420 namespace package (there is deliberately no
-  `tools/__init__.py`); a rename to a top-level package is planned, not done.
+- **Installed from git, not from PyPI.** `pip install "git+https://github.com/dadbodnerd/bigbrain.git"` works and the package builds as an sdist and
+  a wheel, but the name `bigbrain` is taken on PyPI by an unrelated project, so there is no `pip install bigbrain` from the index yet (a
+  different distribution name would be needed; the import name would stay `bigbrain`). `patches/` and `deploy/` are repo tools, not part of
+  the installed package. Until v0.2.0 the code imported as `tools.bigbrain`; that name is gone.
 - **The nodes need exllamav3 1.6.x** (`>=1.6.0,<1.7`). The engine imports exllamav3 internals, so an exllamav3 upgrade can break
-  it. torch and exllamav3 are not installed by this repository.
+  it. torch and exllamav3 are only installed by the optional `gpu` extra, and only sensibly after a CUDA-matched wheel (see Quick start).
 - **The model folder must exist on every node's local disk**, at the path in the registry. Nothing copies or shards weights for you.
 - **Fail-stop.** If a node or a link dies, the pipeline is marked dead (`/health` answers 503 with `engine.dead`) and you restart
   it. There is no recovery or re-balancing.
@@ -133,12 +155,12 @@ curl http://10.0.0.11:16980/v1/chat/completions -H "Authorization: Bearer $(cat 
 - **Text-only, one model per endpoint, `n` must be 1, no logprobs.** `tools` are rendered into the chat template but tool calls are
   not parsed out of the output. Speculative decoding applies to greedy requests only.
 - **Greedy output equality on real hardware is a measured property, not a proven one.** On CPU with fake layers every speculative
-  and batched run is token-identical to the plain run; exllamav3's kernels are not promised batch-invariant, so `tools.bigbrain.bench`
-  and `tools.bigbrain.parity_check` exist to check it on your hardware.
-- **No TLS, no per-user auth, and an unauthenticated inter-node protocol.** See [SECURITY.md](SECURITY.md).
+  and batched run is token-identical to the plain run; exllamav3's kernels are not promised batch-invariant, so `bigbrain-bench`
+  and `bigbrain-parity` exist to check it on your hardware.
+- **No TLS, no per-user auth, and an unauthenticated inter-node protocol.** See [SECURITY.md](https://github.com/dadbodnerd/bigbrain/blob/main/SECURITY.md).
 - **`--split capacity` reads free memory with `nvidia-smi` over ssh.** Memory that another process already holds counts as used.
   You can plug in your own reader (see CONFIGURATION.md).
-- **No CI yet.** The suite (553 passed, 4 skipped) was last run on Windows 11 with Python 3.11 and 3.14; it has not been run on Linux for this release.
+- **No CI yet.** The suite was last run on Windows 11, against the installed wheel and from a checkout: 566 passed, 4 skipped on Python 3.14 with torch; 456 passed, 114 skipped (the torch cases) on Python 3.11 and 3.14 without it. It has not been run on Linux for this release.
 
 ### Tested hardware
 
@@ -151,22 +173,23 @@ curl http://10.0.0.11:16980/v1/chat/completions -H "Authorization: Bearer $(cat 
 ## Repository layout
 
 ```
-tools/bigbrain/    the engine
-  pipe worker server engine paged spec draft     the node runtime (with the two __init__.py files these are the nine files the controller stages)
+pyproject.toml     the package: name, version 0.2.0, dependencies, the `gpu` and `dev` extras, the seven console scripts
+src/bigbrain/      the package (import name `bigbrain`)
+  __init__ pipe worker server engine paged spec draft     the node runtime: these eight files are the ones the controller stages
   controller registry build_registry merge_models footprint site parity_check bench      controller side: planner, registry, tools
-patches/           optional patches for upstream TabbyAPI and exllamav3: scripts, pins, a read-only verifier
-deploy/            release.py (git archive -> an immutable release dir), verify_stage.py, run_node.sh, bigbrain-node@.service
+patches/           optional patches for upstream TabbyAPI and exllamav3: scripts, pins, a read-only verifier (repo-only: not in the wheel or the sdist)
+deploy/            release.py (git archive -> an immutable release dir), verify_stage.py, run_node.sh, bigbrain-node@.service (repo-only)
 examples/          model_registry.example.json
-tests/             the engine tests, fakes and fixtures
+tests/             the tests, fakes and fixtures
 docs/              API.md
 site.example.toml  the site configuration template
 ```
 
 ## Licence and credits
 
-BigBrain's own code and documentation are under the [MIT licence](LICENSE). The files under `patches/tabbyapi/` modify TabbyAPI and are
+BigBrain's own code and documentation are under the [MIT licence](https://github.com/dadbodnerd/bigbrain/blob/main/LICENSE). The files under `patches/tabbyapi/` modify TabbyAPI and are
 offered under the **AGPL-3.0-or-later** (`patches/tabbyapi/LICENSE`); `patches/exllamav3/` carries exllamav3's MIT notice. No TabbyAPI or
-exllamav3 source file is included here. [patches/NOTICE.md](patches/NOTICE.md) explains which licence covers what.
+exllamav3 source file is included here. [patches/NOTICE.md](https://github.com/dadbodnerd/bigbrain/blob/main/patches/NOTICE.md) explains which licence covers what.
 
 BigBrain stands on [exllamav3](https://github.com/turboderp-org/exllamav3) by turboderp, which does all of the actual model
 execution, and the patches are written against [TabbyAPI](https://github.com/theroyallab/tabbyAPI) by the Royal Lab. It was

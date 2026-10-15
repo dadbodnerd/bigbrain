@@ -23,10 +23,10 @@ import pytest
 from bigbrain_speed_fakes import KINDS_FULL, KINDS_MIXED, FakeBlock, FakeModel, FakeSWAState, V
 from bigbrain_speed_harness import (BOUNDS, CTX, PROMPTS, Pipe, legacy_generate, make_node, oracle,
                                     pipes)  # noqa: F401  (pipes is a fixture)
-from tools.bigbrain.engine import BigBrainRemoteError, EngineConfig, EngineDead, PipelineEngine
-from tools.bigbrain.paged import StepMeta, StepRow
-from tools.bigbrain.spec import SpecConfig
-from tools.bigbrain.worker import SamplingSettings
+from bigbrain.engine import BigBrainRemoteError, EngineConfig, EngineDead, PipelineEngine
+from bigbrain.paged import StepMeta, StepRow
+from bigbrain.spec import SpecConfig
+from bigbrain.worker import SamplingSettings
 
 
 def _torch():
@@ -378,7 +378,7 @@ def test_single_sequence_and_batched_modes_cannot_be_mixed(pipes):
     p = pipes([(0, 4)], slots=2, max_draft=0, start=False)
     gen = p.head.generate(PROMPTS[0], SamplingSettings(), 5)
     next(gen)
-    from tools.bigbrain.paged import BigBrainStateError
+    from bigbrain.paged import BigBrainStateError
     with pytest.raises(BigBrainStateError, match="cannot be mixed"):
         p.head.seq_begin(9, 1, SamplingSettings())
     gen.close()

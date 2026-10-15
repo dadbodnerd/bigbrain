@@ -21,6 +21,7 @@ exit 0 = every host matches its entry; 1 = at least one difference; 3 = a host c
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shlex
@@ -31,9 +32,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parent))
+if importlib.util.find_spec("bigbrain") is None:       # a bare checkout, nothing pip-installed: use this checkout's src/
+    sys.path.insert(0, str(HERE.parent / "src"))
 import patchfile  # noqa: E402
-from tools.bigbrain import site  # noqa: E402  (a host's `ssh` may be a name from site.toml [hosts])
+from bigbrain import site  # noqa: E402  (a host's `ssh` may be a name from site.toml [hosts])
 
 ENV_HOSTS = "BIGBRAIN_PATCH_HOSTS"
 

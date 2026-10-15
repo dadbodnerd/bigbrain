@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/site.py -- the one place BigBrain reads site-specific settings from.
+"""bigbrain/site.py -- the one place BigBrain reads site-specific settings from.
 
 Everything that belongs to YOUR network and not to the engine lives in one small TOML file, `site.toml`
 (`site.example.toml` is the annotated template). Nothing in the engine hard-codes an address, a user name or a path.

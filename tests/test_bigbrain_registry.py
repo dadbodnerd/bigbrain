@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/registry.py + build_registry.py: which model is on which PC.
+"""bigbrain/registry.py + build_registry.py: which model is on which PC.
 
 Pure tests: a scratch registry in a temp dir, fake nvidia-smi / topo output,
 fake safetensors headers. No ssh, no network, no cluster.
@@ -16,8 +16,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.bigbrain import build_registry as br  # noqa: E402
-from tools.bigbrain import registry as reg  # noqa: E402
+from bigbrain import build_registry as br  # noqa: E402
+from bigbrain import registry as reg  # noqa: E402
 
 
 def scratch_registry():

@@ -46,10 +46,12 @@ another server first.
 
 ## 2. The model registry
 
-`model_registry.json` is the one data file the controller reads. Where it is read from, in this order: an explicit `--registry PATH` (for the
-tools that take one); `$BIGBRAIN_REGISTRY`; `site.toml`'s `[registry] path`; a `model_registry.json` beside `tools/bigbrain/registry.py`;
-otherwise an error that names the variable. `examples/model_registry.example.json` is a complete example. `build_registry` writes the real
-one by measuring your PCs; `merge_models` adds models from an audit without touching anything else.
+`model_registry.json` is the one data file the controller reads. Where it is read from, in this order: an explicit `--registry PATH`
+(for the tools that take one); `$BIGBRAIN_REGISTRY`; `site.toml`'s `[registry] path`; a `model_registry.json` beside
+`bigbrain/registry.py` (a checkout's `src/bigbrain/`, git-ignored; in a pip install that is inside site-packages, so an installed
+package should use `$BIGBRAIN_REGISTRY` or `site.toml`); otherwise an error that names the variable.
+`examples/model_registry.example.json` is a complete example. `bigbrain-registry` (`build_registry`) writes the real one by
+measuring your PCs; `bigbrain-merge-models` (`merge_models`) adds models from an audit without touching anything else.
 
 ```
 { "version": 1,
@@ -85,7 +87,7 @@ GPU generations. Index the cards the way `nvidia-smi` does.
 |---|---|
 | `paths` | `{node name: model folder on that PC}`: where the model lives. A PC without an entry cannot hold a slice |
 | `layers`, `layer_types`, `hidden_size`, `vocab_size`, `num_key_value_heads`, `head_dim`, `arch`, `bits` | shape facts from the model's `config.json` |
-| `kv_elements_per_token` | K+V elements one token adds to the cache across the whole model (full-attention layers only), from `tools/bigbrain/footprint.py` |
+| `kv_elements_per_token` | K+V elements one token adds to the cache across the whole model (full-attention layers only), from `src/bigbrain/footprint.py` |
 | `kv_sliding_elements_per_token`, `sliding_window` | the same for sliding-window layers, which exllamav3 keeps as a small per-sequence state (gpt-oss) |
 | `layer_mib`, `embed_mib`, `head_mib`, `other_mib` | measured size of each layer, the embedding, the LM head and anything else. Without them the planner estimates evenly from `size_gib` and says so |
 | `size_gib` | total size of the weight files |
@@ -109,7 +111,7 @@ rather than a guess.
 
 ## 4. Flags
 
-### The controller (`python -m tools.bigbrain.controller`)
+### The controller (`bigbrain-controller`, or `python -m bigbrain.controller`)
 
 Dry run unless `--execute`. Choose **one** way to say which cards: `--model NAME` with `--all-cards` (every GPU of the `--hosts` PCs that have
 the model) or `--gpus HOST:GPU` repeated in pipeline order, or `--node HOST:GPU:START:END:INPORT` repeated for a fully explicit plan.
@@ -138,7 +140,7 @@ the model) or `--gpus HOST:GPU` repeated in pipeline order, or `--node HOST:GPU:
 | `--execute` | off | stage and launch over ssh |
 | `--prompt`, `--max-new` | `Hello`, 32 | a one-shot generation instead of serving (single sequence only) |
 
-### The nodes (`python -m tools.bigbrain.worker`; node 0 with `--http-port` is the server)
+### The nodes (`python -m bigbrain.worker`, or `bigbrain-node`; node 0 with `--http-port` is the server)
 
 You normally never type these: the controller builds them. They matter when you start a node by hand (`deploy/run_node.sh`).
 
@@ -180,5 +182,5 @@ Server-only flags (node 0):
 `build_registry`: `--node NAME=HOST:ROOT` (repeatable), `--config FILE`, `--registry PATH`, `--write`. `merge_models`: `--registry PATH
 --update update.json [--write]`. `bench`: `grid` and `compare`. `parity_check`: `reference`, `run`, `compare`, `http`. Each has `--help`.
 
-`tools/bigbrain/speed_flags.json` holds flag fragments (`slots`, and `draft` for `ngram` or a draft model) that a custom launch script can append to every
+`bigbrain/speed_flags.json` (package data: `src/bigbrain/` in a checkout, `importlib.resources.files("bigbrain")` when installed) holds flag fragments (`slots`, and `draft` for `ngram` or a draft model) that a custom launch script can append to every
 node's command; the controller builds the same flags itself from `--slots` and `--spec-draft`, so you only need the file if you start nodes some other way.

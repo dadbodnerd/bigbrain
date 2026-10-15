@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/bench.py -- measure a running BigBrain server: the speed grid and the parity proof.
+"""bigbrain/bench.py -- measure a running BigBrain server: the speed grid and the parity proof.
 
 Stdlib only; runs anywhere that can reach node 0's HTTP port (directly, or through an ssh -L).
 It talks to `/v1/bigbrain/generate` (greedy, ignore_eos, fixed length) and
@@ -16,7 +16,7 @@ It talks to `/v1/bigbrain/generate` (greedy, ignore_eos, fixed length) and
     compare  two result files -> the same parity verdict.
 
     # the speed grid: slots {1,2,4,8} x speculation {none, ngram, draft}
-    python -m tools.bigbrain.bench grid --url http://127.0.0.1:16980 --key-file api_key \\
+    python -m bigbrain.bench grid --url http://127.0.0.1:16980 --key-file api_key \\
         --concurrency 1 2 4 8 --spec none ngram draft --max-tokens 256 --prompts-file prompts.json \\
         --out grid.json
 

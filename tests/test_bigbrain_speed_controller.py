@@ -11,14 +11,15 @@ from pathlib import Path
 
 import pytest
 
-import tools.bigbrain.controller as ctl
-from tools.bigbrain import registry as bbreg
-from tools.bigbrain import server as srv
-from tools.bigbrain import worker as wk
-from tools.bigbrain.controller import PACKAGE_FILES, ClusterPlan, NodeSpec, plan_from_args, stage_package
-from tools.bigbrain.paged import PagedSlots
+import bigbrain
+import bigbrain.controller as ctl
+from bigbrain import registry as bbreg
+from bigbrain import server as srv
+from bigbrain import worker as wk
+from bigbrain.controller import PACKAGE_FILES, ClusterPlan, NodeSpec, plan_from_args, stage_package
+from bigbrain.paged import PagedSlots
 
-PKG = Path(__file__).resolve().parent.parent / "tools" / "bigbrain"
+PKG = Path(bigbrain.__file__).resolve().parent            # the imported package: the installed one when there is one
 MIB = 1024 * 1024
 
 
@@ -37,7 +38,7 @@ def _serve_plan(**kw):
 # ---- BUG 2: server.py (and everything it and the worker import) must be staged
 
 def _relative_imports(path: Path):
-    """The tools/bigbrain modules a file imports: `from .x import ...` / `from . import x`."""
+    """The bigbrain modules a file imports: `from .x import ...` / `from . import x`."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     mods = set()
     for node in ast.walk(tree):
@@ -50,16 +51,16 @@ def _relative_imports(path: Path):
 
 
 def test_server_py_is_staged():
-    assert "tools/bigbrain/server.py" in PACKAGE_FILES
+    assert "bigbrain/server.py" in PACKAGE_FILES
     shipped = []
     stage_package("h0", "u", str(PKG), "/tmp/bigbrain", stager=lambda h, u, rp, c: shipped.append(rp))
-    assert "/tmp/bigbrain/tools/bigbrain/server.py" in shipped
+    assert "/tmp/bigbrain/bigbrain/server.py" in shipped
 
 
 def test_the_staged_package_is_closed_under_relative_imports():
-    """Any module a staged module imports from tools/bigbrain must be staged too -- a node would
+    """Any module a staged module imports from bigbrain must be staged too -- a node would
     die with ImportError otherwise (this is how server.py went missing)."""
-    staged = {Path(f).stem for f in PACKAGE_FILES if f.startswith("tools/bigbrain/")}
+    staged = {Path(f).stem for f in PACKAGE_FILES if f.startswith("bigbrain/")}
     seen, todo = set(), ["worker", "server"]
     while todo:
         m = todo.pop()
@@ -75,9 +76,7 @@ def test_the_staged_package_is_closed_under_relative_imports():
 
 def test_every_staged_file_exists():
     for rel in PACKAGE_FILES:
-        if rel.endswith("tools/__init__.py"):
-            continue            # the repo has no tools/__init__.py; stage_package ships it empty
-        assert (PKG.parent.parent / rel).is_file(), rel
+        assert (PKG.parent / rel).is_file(), rel
 
 
 # ---- BUG 1: the serving command line must be accepted by what it runs
@@ -89,20 +88,20 @@ def _argv(cmd: str, module: str):
 def test_serving_commands_parse_node_zero_as_the_server_and_the_rest_as_workers():
     plan = _serve_plan(slots=4, spec="ngram", spec_k=4)
     c0, c1 = plan.build_commands()
-    a0 = srv.build_arg_parser().parse_args(_argv(c0, "tools.bigbrain.worker"))
+    a0 = srv.build_arg_parser().parse_args(_argv(c0, "bigbrain.worker"))
     assert a0.http_port == 16980 and a0.api_token == "T0K" and a0.rank == 0
-    a1 = wk.build_arg_parser().parse_args(_argv(c1, "tools.bigbrain.worker"))
+    a1 = wk.build_arg_parser().parse_args(_argv(c1, "bigbrain.worker"))
     assert a1.rank == 1 and wk.effective_slots(a1) == 4 and wk.effective_max_draft(a1) == 4
     # the worker's own parser has no HTTP flags: that was the bug -- worker.main now hands them to the server
     with pytest.raises(SystemExit):
-        wk.build_arg_parser().parse_args(_argv(c0, "tools.bigbrain.worker"))
+        wk.build_arg_parser().parse_args(_argv(c0, "bigbrain.worker"))
 
 
 def test_serving_launch_of_node_zero_reaches_server_main(monkeypatch):
     got = []
     monkeypatch.setattr(srv, "main", lambda argv=None: (got.append(list(argv)), 0)[1])
     plan = _serve_plan()
-    argv0 = _argv(plan.build_commands()[0], "tools.bigbrain.worker")
+    argv0 = _argv(plan.build_commands()[0], "bigbrain.worker")
     assert wk.main(argv0) == 0 and got == [argv0]
 
 

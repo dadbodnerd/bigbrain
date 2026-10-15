@@ -1,7 +1,7 @@
 # patches/
 
 Optional changes to upstream **TabbyAPI** and **exllamav3**, as scripts you can check, apply and undo. **None of this is needed to run
-BigBrain.** The pipeline-parallel engine is `tools/bigbrain/`; it only borrows an interpreter that has exllamav3. These are reliability fixes
+BigBrain.** The pipeline-parallel engine is `src/bigbrain/`; it only borrows an interpreter that has exllamav3. These are reliability fixes
 the author applies to the TabbyAPI servers that share the same machines, kept here with one version pin and one way to tell whether a host has
 them. They edit upstream source, so read the licence note at the end first.
 

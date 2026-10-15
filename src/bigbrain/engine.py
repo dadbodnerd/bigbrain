@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/engine.py -- node 0's batched pipeline engine.
+"""bigbrain/engine.py -- node 0's batched pipeline engine.
 
 The single-sequence path (worker.SliceWorker.generate) keeps ONE token in the
 pipeline at a time: node k computes while every other node waits, and each
@@ -172,7 +172,7 @@ class PipelineEngine:
                 w._tx_out.send_control({"op": "hello", "proto": PROTO, "nodes": [caps0],
                                         "slots": self.slots, "ctx": self.ctx}, request_id=0)
             ack = self._wait_box("hello_ack", timeout, "the nodes' handshake (a node on an older "
-                                 "build never answers: stage the same tools/bigbrain/ on every node)")
+                                 "build never answers: stage the same bigbrain/ package on every node)")
             nodes = ack.get("nodes") or []
         self._validate_nodes(nodes)
         self.node_caps = nodes

@@ -10,8 +10,8 @@ import types
 
 import pytest
 
-from tools.bigbrain import controller as ctl
-from tools.bigbrain import registry as reg
+from bigbrain import controller as ctl
+from bigbrain import registry as reg
 
 REG = {"version": 1, "nodes": {
     "a": {"host": "10.0.0.1", "user": "ua", "launch": True, "python": "/pa", "model_root": "/m",

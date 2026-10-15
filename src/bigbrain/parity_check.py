@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/parity_check.py -- does the pipeline compute what the
+"""bigbrain/parity_check.py -- does the pipeline compute what the
 monolithic model computes? Greedy, N tokens: token-for-token match plus the max
 absolute logit difference, for dense AND hybrid (recurrent) models.
 
 Subcommands (run with the venv python that has exllamav3 from the directory that holds
-tools/bigbrain/, e.g. the controller's stage root /tmp/bigbrain):
+bigbrain/, e.g. the controller's stage root /tmp/bigbrain):
 
   reference  Load the WHOLE model on one GPU and generate N greedy tokens with
              exllamav3's own API -- Model.prefill() over prompt[:-1] (chunked
@@ -20,7 +20,7 @@ tools/bigbrain/, e.g. the controller's stage root /tmp/bigbrain):
              from the last node), then compare. Processes run one phase at a
              time, so the reference and the pipeline never share VRAM.
   compare    Two dumps -> verdict (exit 0 PASS, 1 FAIL).
-  http       A running tools/bigbrain/server.py (any topology, cross-machine):
+  http       A running bigbrain/server.py (any topology, cross-machine):
              POST the reference dump's prompt ids to /v1/bigbrain/generate
              (greedy, ignore_eos, return_logits), then compare.
 
@@ -54,7 +54,7 @@ from .worker import encode_prompt, make_cache, read_dump, write_dump
 DEFAULT_PROMPT = (
     "Write a short, factual paragraph about how a transistor works, then list three "
     "everyday devices that depend on transistors and explain in one sentence each why.")
-PKG_ROOT = Path(__file__).resolve().parent.parent.parent  # the dir holding tools/
+PKG_ROOT = Path(__file__).resolve().parent.parent  # the dir holding bigbrain/ (src/ in a checkout, site-packages when installed)
 
 
 def _torch():
@@ -291,7 +291,7 @@ def build_pipeline_commands(python: str, model_dir: str, nodes: Sequence[Tuple[s
     T = len(nodes)
     cmds = []
     for r, (dev, s, e) in enumerate(nodes):
-        argv = [python, "-m", "tools.bigbrain.worker", "--model-dir", model_dir,
+        argv = [python, "-m", "bigbrain.worker", "--model-dir", model_dir,
                 "--device", dev, "--slice", str(s), str(e), "--rank", str(r), "--total", str(T),
                 "--max-num-tokens", str(max_num_tokens), "--prefill-chunk", str(prefill_chunk),
                 "--max-new", str(n), "--temperature", "0", "--ignore-eos", *prompt_args]
@@ -361,7 +361,7 @@ def cmd_run(a) -> int:
     prompt_args = _prompt_args(a)
     ref = a.reference or str(workdir / "reference.npz")
     if not a.reference:
-        argv = [a.python, "-m", "tools.bigbrain.parity_check", "reference", "--model-dir",
+        argv = [a.python, "-m", "bigbrain.parity_check", "reference", "--model-dir",
                 a.model_dir, "--device", a.ref_device, "--n", str(a.n), "--out", ref,
                 "--max-num-tokens", str(a.max_num_tokens), "--prefill-chunk",
                 str(a.prefill_chunk), *prompt_args]

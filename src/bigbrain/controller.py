@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/controller.py -- BigBrain cluster controller v1.
+"""bigbrain/controller.py -- BigBrain cluster controller v1.
 
 Launches and monitors one worker process per machine for a pipeline-parallel
 model. Line topology: node 0 (tokenizer) -> node 1 -> ... -> node T-1
@@ -11,7 +11,7 @@ touches nothing.
 
 The controller runs on any machine with ssh keys to the GPU machines (it needs no GPU itself) and reaches them with
 `ssh -o BatchMode=yes <user>@<host> <cmd>`. The ssh user comes from the node's registry entry, else site.toml's [ssh] user
-(tools/bigbrain/site.py), else the local user. The runner is injectable so tests exercise the whole plan/launch/wait path
+(bigbrain/site.py), else the local user. The runner is injectable so tests exercise the whole plan/launch/wait path
 with a fake.
 """
 from __future__ import annotations
@@ -68,7 +68,7 @@ class ClusterPlan:
     # SERVE mode (a long-running session instead of a one-shot run): node 0 serves
     # an OpenAI-compatible endpoint on http_port behind a bearer token instead
     # of running one --prompt. ASSUMED engine flags: worker.py accepts
-    # --http-port and --api-token on node 0 (tools/bigbrain/server.py).
+    # --http-port and --api-token on node 0 (bigbrain/server.py).
     http_port: int = 0
     api_token: str = ""
     # SPEED (several sequences in flight + speculative decoding; engine.py / spec.py).
@@ -164,7 +164,7 @@ class ClusterPlan:
     def build_commands(self, python_bin: Optional[str] = None,
                    redirect_logs: bool = False) -> List[str]:
         """One remote shell command per node, in rank order: the exact
-        `cd <stage> && python -m tools.bigbrain.worker ...` form. With
+        `cd <stage> && python -m bigbrain.worker ...` form. With
         redirect_logs, each node's stdout/stderr goes to <stage>/node_<i>.log."""
         pybin = python_bin or self.python_bin
         cmds = []
@@ -220,7 +220,7 @@ class ClusterPlan:
                         parts.append(f"--inflight {self.inflight}")
                     if self.mb_size:
                         parts.append(f"--mb-size {self.mb_size}")
-            # cd first: -m tools.bigbrain.worker resolves against the cwd, which
+            # cd first: -m bigbrain.worker resolves against the cwd, which
             # is where stage_package() puts the package. Operator-supplied paths
             # are shell-quoted (the remote shell interprets this string).
             # CUDA_DEVICE_ORDER=PCI_BUS_ID: torch's default order is FASTEST_FIRST,
@@ -228,43 +228,47 @@ class ClusterPlan:
             # nvidia-smi's index N -- and the planner sized each slice from
             # nvidia-smi's reading of index N. Bus order makes the two agree.
             cmd = (f"cd {shlex.quote(self.stage_root)} && {DEVICE_ORDER_ENV} "
-                   f"{shlex.quote(node_pybin)} -m tools.bigbrain.worker {' '.join(parts)}")
+                   f"{shlex.quote(node_pybin)} -m bigbrain.worker {' '.join(parts)}")
             if redirect_logs:
                 cmd += f" > {shlex.quote(self.stage_root + '/node_' + str(i) + '.log')} 2>&1"
             cmds.append(cmd)
         return cmds
 
 
-# The worker package staged onto every node (relative to the repo root).
+# The worker package staged onto every node, relative to the directory that holds the `bigbrain` package (src/ in a checkout,
+# site-packages in a pip install). On the node it lands as <stage-root>/bigbrain/*.py, which is what `cd <stage-root> && python -m
+# bigbrain.worker` imports.
 PACKAGE_FILES = (
-    "tools/__init__.py",
-    "tools/bigbrain/__init__.py",
-    "tools/bigbrain/pipe.py",
-    "tools/bigbrain/worker.py",
+    "bigbrain/__init__.py",
+    "bigbrain/pipe.py",
+    "bigbrain/worker.py",
     # node 0 in serving mode runs as the OpenAI endpoint (worker.main hands `--http-port` over to it)
-    "tools/bigbrain/server.py",
+    "bigbrain/server.py",
     # imported by worker.py / server.py: the batched engine, speculation, paged slots, the draft model
-    "tools/bigbrain/paged.py",
-    "tools/bigbrain/spec.py",
-    "tools/bigbrain/engine.py",
-    "tools/bigbrain/draft.py",
+    "bigbrain/paged.py",
+    "bigbrain/spec.py",
+    "bigbrain/engine.py",
+    "bigbrain/draft.py",
 )
 
 #: Prefixed to every worker command (see build_commands).
 DEVICE_ORDER_ENV = "CUDA_DEVICE_ORDER=PCI_BUS_ID"
 
 
-#: `pgrep -f` (ERE) pattern for a BigBrain node's command line, in BOTH launch forms: `python -m tools.bigbrain.worker ...` (the
-#: controller, deploy/run_node.sh) and `python -c "... from tools.bigbrain import worker ..."` (a wrapper script that imports the
-#: module; its command line never contains the string "tools.bigbrain.worker").
+#: `pgrep -f` (ERE) pattern for a BigBrain node's command line, in BOTH launch forms: `python -m bigbrain.worker ...` (the
+#: controller, deploy/run_node.sh) and `python -c "... from bigbrain import worker ..."` (a wrapper script that imports the
+#: module; its command line never contains the string "bigbrain.worker").
 #: `server` is matched too (node 0 started as the endpoint). Written with [.] so the pattern's own text does not match it: the
-#: shell that runs pgrep carries this string in its command line.
-NODE_PROCESS_PATTERN = "tools[.]bigbrain([.]| import )(worker|server)"
+#: shell that runs pgrep carries this string in its command line. The package is a top-level name, so the leading group keeps
+#: `bigbrain` from matching inside a longer name or path (`mybigbrain.worker`, `/opt/bigbrain.server/`). Nodes started through the
+#: `bigbrain-node` / `bigbrain-server` console scripts are NOT matched: their command line has no module name (stop those with
+#: SIGTERM to node 0, or through their own service manager). Valid in Python's `re` as well as POSIX ERE (no [[:classes:]]).
+NODE_PROCESS_PATTERN = "(^|[^A-Za-z0-9_./@-])bigbrain([.]| import )(worker|server)"
 
 
 def teardown_command(stage_root: str, sig: str = "TERM") -> str:
-    """The remote shell command that signals every BigBrain node (worker or server, started with `-m tools.bigbrain.X` or with
-    `-c "from tools.bigbrain import X ..."`) whose working directory is `stage_root` -- this session's nodes and nothing else
+    """The remote shell command that signals every BigBrain node (worker or server, started with `-m bigbrain.X` or with
+    `-c "from bigbrain import X ..."`) whose working directory is `stage_root` -- this session's nodes and nothing else
     (another session, or a one-shot CLI run, has its own stage dir). The shell running this carries the pattern in its own
     command line, but the pattern does not match its own text (see NODE_PROCESS_PATTERN) and its cwd is the login dir.
     Always exits 0."""
@@ -290,13 +294,11 @@ def stage_package(host: str, user: str, pkg_dir: str, remote_root: str,
     """Copy the worker package to one node. stager(host, user, path, content)
     is injectable for tests. Returns the remote paths staged."""
     stager = stager or _default_stager
-    repo_root = Path(pkg_dir).resolve().parent.parent  # .../tools/bigbrain -> root
+    root = Path(pkg_dir).resolve().parent  # .../src/bigbrain (or site-packages/bigbrain) -> the dir that holds `bigbrain`
     staged = []
     for rel in PACKAGE_FILES:
-        src = repo_root / rel
-        # tools/__init__.py is a synthetic package marker (absent in the repo);
-        # the real files (pipe/worker/__init__) are read verbatim.
-        content = src.read_text(encoding="utf-8") if src.exists() else ""
+        # every file is read verbatim; a missing one is an error, never an empty file shipped to a node
+        content = (root / rel).read_text(encoding="utf-8")
         remote = f"{remote_root}/{rel}"
         stager(host, user, remote, content)
         staged.append(remote)

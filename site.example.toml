@@ -10,7 +10,7 @@
 user = "bigbrain"
 
 [registry]
-# The model registry (examples/model_registry.example.json shows the shape; tools/bigbrain/build_registry.py writes one by
+# The model registry (examples/model_registry.example.json shows the shape; `bigbrain-registry` (build_registry.py) writes one by
 # measuring your PCs). A relative path is relative to this file. $BIGBRAIN_REGISTRY, when set, wins.
 path = "model_registry.json"
 

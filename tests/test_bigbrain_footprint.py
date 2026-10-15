@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/footprint.py: K+V elements one token adds to a model's cache, per architecture family. The first cases pin the
+"""bigbrain/footprint.py: K+V elements one token adds to a model's cache, per architecture family. The first cases pin the
 rule for the hybrid Qwen, Nemotron-NAS and Gemma 2/3; the golden table at the end pins the answer for seven real-world
 configs, so a change to the rule shows up as a changed number here and not as a silently different plan."""
 import pytest
 
-from tools.bigbrain.footprint import kv_shape
+from bigbrain.footprint import kv_shape
 
 
 def test_kv_shape_counts_only_full_attention_layers_of_the_hybrid_qwen():

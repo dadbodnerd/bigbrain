@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""Tests for tools/bigbrain/worker.py -- no exllamav3, no GPU.
+"""Tests for bigbrain/worker.py -- no exllamav3, no GPU.
 
 Two layers:
 
@@ -40,8 +40,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tools.bigbrain.pipe import BigBrainLink
-from tools.bigbrain.worker import (
+from bigbrain.pipe import BigBrainLink
+from bigbrain.worker import (
     BigBrainRemoteError,
     BigBrainStateError,
     SamplingSettings,
@@ -851,7 +851,7 @@ def test_failed_chunk_discards_the_half_advanced_state():
 
 def test_sampler_greedy_and_top_k_one_are_argmax():
     t = _torch()
-    from tools.bigbrain.worker import Sampler
+    from bigbrain.worker import Sampler
     row = t.tensor([0.1, 2.0, -1.0, 1.9])
     assert Sampler(SamplingSettings()).sample(row) == 1
     assert Sampler(SamplingSettings(temperature=1.5, top_k=1, seed=3)).sample(row) == 1
@@ -859,7 +859,7 @@ def test_sampler_greedy_and_top_k_one_are_argmax():
 
 def test_sampler_seed_is_reproducible_and_filters_hold():
     t = _torch()
-    from tools.bigbrain.worker import Sampler
+    from bigbrain.worker import Sampler
     row = t.linspace(-2, 2, 50)
     s = SamplingSettings(temperature=1.0, top_k=5, seed=11)
     a = Sampler(s)
@@ -1154,12 +1154,12 @@ def test_the_rebase_fallback_still_matches():
 def _controller_commands():
     """The real ClusterPlan.build_commands() output (the registry module may be
     absent when only the node runtime is checked out; a stub stands in for the import only)."""
-    if "tools.bigbrain.registry" not in sys.modules:
+    if "bigbrain.registry" not in sys.modules:
         try:
-            import tools.bigbrain.registry  # noqa: F401
+            import bigbrain.registry  # noqa: F401
         except ImportError:
-            sys.modules["tools.bigbrain.registry"] = types.ModuleType("tools.bigbrain.registry")
-    from tools.bigbrain.controller import ClusterPlan, NodeSpec
+            sys.modules["bigbrain.registry"] = types.ModuleType("bigbrain.registry")
+    from bigbrain.controller import ClusterPlan, NodeSpec
     plan = ClusterPlan(model_dir="/m/Qwen3.8-27B", prompt="Hi there", max_new=16,
                        mem_fraction=0.9, token_port=16903, nodes=[
                            NodeSpec(0, "10.0.0.11", 0, 0, 22, 0),
@@ -1171,7 +1171,7 @@ def _controller_commands():
 def test_every_controller_flag_parses():
     parser = build_arg_parser()
     for cmd in _controller_commands():
-        argv = shlex.split(cmd.split(" -m tools.bigbrain.worker ", 1)[1])
+        argv = shlex.split(cmd.split(" -m bigbrain.worker ", 1)[1])
         args = parser.parse_args(argv)
         assert args.model_dir == "/m/Qwen3.8-27B"
         assert args.total == 3
@@ -1192,7 +1192,7 @@ def test_parity_reference_run_agrees_with_the_pipeline(opts):
     """reference_run drives the WHOLE model through exllamav3's own
     Model.prefill/forward API; the pipeline must match it exactly."""
     _torch()
-    from tools.bigbrain.parity_check import reference_run
+    from bigbrain.parity_check import reference_run
     kinds = opts.get("kinds", KINDS_HYBRID)
     kw = {k: v for k, v in opts.items() if k != "kinds"}
     model = FakeModel(kinds, **kw)
@@ -1220,7 +1220,7 @@ def _dump(tokens, rows, prompt=(1, 2, 3)):
 
 
 def test_parity_compare_verdicts():
-    from tools.bigbrain.parity_check import compare_dumps, format_verdict
+    from bigbrain.parity_check import compare_dumps, format_verdict
     rows = np.random.default_rng(0).normal(size=(5, 9)).astype(np.float32)
     toks = [int(r.argmax()) for r in rows]
     v = compare_dumps(_dump(toks, rows), _dump(toks, rows))
@@ -1250,7 +1250,7 @@ def test_parity_compare_verdicts():
 
 
 def test_parity_compare_cli_exit_codes(tmp_path):
-    from tools.bigbrain.parity_check import main
+    from bigbrain.parity_check import main
     rows = np.eye(4, dtype=np.float32)
     a, b = str(tmp_path / "a.npz"), str(tmp_path / "b.npz")
     write_dump(a, [1], [0, 1, 2, 3], rows)
@@ -1261,7 +1261,7 @@ def test_parity_compare_cli_exit_codes(tmp_path):
 
 
 def test_parity_node_specs():
-    from tools.bigbrain.parity_check import parse_nodes
+    from bigbrain.parity_check import parse_nodes
     assert parse_nodes(["cuda:1:0:32", "cuda:2:32:64"], None, 64) == \
         [("cuda:1", 0, 32), ("cuda:2", 32, 64)]
     assert parse_nodes(None, "cuda:0,cuda:1,cuda:2", 64) == \
@@ -1272,14 +1272,14 @@ def test_parity_node_specs():
 
 
 def test_parity_pipeline_commands_parse_as_worker_flags():
-    from tools.bigbrain.parity_check import build_pipeline_commands
+    from bigbrain.parity_check import build_pipeline_commands
     cmds = build_pipeline_commands(
         "/venv/bin/python", "/m/q", [("cuda:1", 0, 22), ("cuda:2", 22, 43), ("cuda:0", 43, 64)],
         prompt_args=["--prompt", "Hi there"], n=64, dump="/w/pipeline.npz", base_port=17900,
         max_num_tokens=4096, prefill_chunk=512, mem_fraction=0.45, extra=["--rebase-layers"])
     parser = build_arg_parser()
     parsed = [parser.parse_args(c[3:]) for c in cmds]
-    assert all(c[:3] == ["/venv/bin/python", "-m", "tools.bigbrain.worker"] for c in cmds)
+    assert all(c[:3] == ["/venv/bin/python", "-m", "bigbrain.worker"] for c in cmds)
     a0, a1, a2 = parsed
     assert (a0.rank, a0.total, a0.slice, a0.device) == (0, 3, [0, 22], "cuda:1")
     assert a0.dump == "/w/pipeline.npz" and a1.dump is None and a2.dump is None

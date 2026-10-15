@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/spec.py -- speculative decoding for the BigBrain pipeline.
+"""bigbrain/spec.py -- speculative decoding for the BigBrain pipeline.
 
 Pure Python (no torch): the logic that decides WHAT to propose, how much of a
 proposal the target model accepts, and how the draft model's own cache is kept

@@ -18,9 +18,9 @@ import pytest
 from bigbrain_speed_fakes import KINDS_MIXED, V, FakeBlock
 from bigbrain_speed_harness import (CTX, KEY, PROMPTS, FakeWorkerEngine, Pipe, oracle,  # noqa: F401
                                     pipes, served)
-from tools.bigbrain import server as srv
-from tools.bigbrain import worker as wk
-from tools.bigbrain.server import BigBrainApp, serve_in_thread
+from bigbrain import server as srv
+from bigbrain import worker as wk
+from bigbrain.server import BigBrainApp, serve_in_thread
 
 def _torch():
     return pytest.importorskip("torch")
@@ -232,7 +232,7 @@ def test_watchdog_flag_reaches_the_slice_worker(monkeypatch):
 
 def test_serving_flags_on_the_worker_command_line_hand_over_to_the_server(monkeypatch):
     """REGRESSION: the controller launches node 0 as
-    `-m tools.bigbrain.worker ... --http-port N --api-token T` and worker.py rejected it."""
+    `-m bigbrain.worker ... --http-port N --api-token T` and worker.py rejected it."""
     got = []
     monkeypatch.setattr(srv, "main", lambda argv=None: (got.append(list(argv)), 0)[1])
     argv = BASE + ["--http-port", "16980", "--api-token", "SECRET"]
@@ -256,8 +256,8 @@ def test_the_shipped_speed_flags_file_works_with_a_launch_scripts_formatting():
     command (after its own `--max-batch-size <slots>`)."""
     import shlex
     from pathlib import Path
-    flags = json.loads((Path(__file__).resolve().parent.parent / "tools" / "bigbrain"
-                        / "speed_flags.json").read_text(encoding="utf-8"))
+    import importlib.resources
+    flags = json.loads(importlib.resources.files("bigbrain").joinpath("speed_flags.json").read_text(encoding="utf-8"))
     for slots in (1, 4, 8):
         for draft in ("none", "ngram", "20b"):
             extra = (flags.get("slots", "").format(n=slots) + " " +

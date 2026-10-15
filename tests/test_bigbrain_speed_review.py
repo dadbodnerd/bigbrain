@@ -20,11 +20,11 @@ import pytest
 
 from bigbrain_speed_fakes import H, KINDS_MIXED, FakeSWA
 from bigbrain_speed_harness import PROMPTS, Pipe, oracle, pipes  # noqa: F401
-from tools.bigbrain.engine import BigBrainRemoteError
-from tools.bigbrain.paged import StepMeta, StepRow
-from tools.bigbrain.pipe import Message
-from tools.bigbrain.spec import DraftRequest, NgramDrafter
-from tools.bigbrain.worker import SamplingSettings, _Tx
+from bigbrain.engine import BigBrainRemoteError
+from bigbrain.paged import StepMeta, StepRow
+from bigbrain.pipe import Message
+from bigbrain.spec import DraftRequest, NgramDrafter
+from bigbrain.worker import SamplingSettings, _Tx
 
 
 def _torch():

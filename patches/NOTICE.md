@@ -1,6 +1,6 @@
 # Third-party notices for `patches/`
 
-BigBrain's own code and documentation (the engine in `tools/bigbrain/`, `deploy/`, `tests/`, `docs/`, the top-level `*.md` files, and the
+BigBrain's own code and documentation (the engine in `src/bigbrain/`, `deploy/`, `tests/`, `docs/`, the top-level `*.md` files, and the
 scripts and tests under `patches/` outside the two upstream-derived subtrees below) are released under the **MIT License**,
 Copyright (c) 2026 dadbodnerd (see `/LICENSE`).
 

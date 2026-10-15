@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/footprint.py -- K+V elements one token adds to a model's cache, from its config.json.
+"""bigbrain/footprint.py -- K+V elements one token adds to a model's cache, from its config.json.
 
 The one rule build_registry.py uses for the registry's `kv_elements_per_token`, and so the one the capacity planner prices
 the KV cache with. It is a lower bound by design: every branch returns what the architecture really caches, and a missing

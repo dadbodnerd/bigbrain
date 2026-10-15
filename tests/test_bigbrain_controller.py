@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""Tests for tools/bigbrain/controller.py (v1).
+"""Tests for bigbrain/controller.py (v1).
 
 All tests use fake runners -- no GPU, no network, no ssh.
 """
 import pytest
 
-from tools.bigbrain.controller import (
+from bigbrain.controller import (
     ClusterPlan, NodeSpec, Controller, plan_from_args,
 )
 
@@ -91,7 +91,7 @@ class TestValidate:
         assert plan.validate() == []
 
     def test_teardown_command_targets_only_this_stage_dir(self):
-        from tools.bigbrain.controller import teardown_command
+        from bigbrain.controller import teardown_command
         c = teardown_command("/tmp/bigbrain/bb-1", "TERM")
         assert "kill -TERM" in c and "/tmp/bigbrain/bb-1" in c and "/proc/$p/cwd" in c
         assert c.rstrip().endswith("true")
@@ -99,26 +99,30 @@ class TestValidate:
             teardown_command("/tmp/x", "HUP; rm -rf /")
 
     def test_teardown_pattern_matches_both_launch_forms_and_not_itself(self):
-        """v0.1.1: the controller's own launch is `-m tools.bigbrain.worker`, a wrapper script's is `python -c "... from
-        tools.bigbrain import worker ..."` . One pattern finds both; it does not match unrelated
+        """v0.1.1 / v0.2.0 (module is now top-level `bigbrain`): the controller's own launch is `-m bigbrain.worker`, a wrapper script's is `python -c "... from
+        bigbrain import worker ..."` . One pattern finds both; it does not match unrelated
         processes nor the shell that carries it."""
         import re
-        from tools.bigbrain.controller import NODE_PROCESS_PATTERN, teardown_command
+        from bigbrain.controller import NODE_PROCESS_PATTERN, teardown_command
         rx = re.compile(NODE_PROCESS_PATTERN)
-        launched_by_controller = "/venv/bin/python -m tools.bigbrain.worker --model-dir /m --rank 1 --total 4"
-        launched_by_run_node = "/venv/bin/python -m tools.bigbrain.worker --rank 0 --http-port 16980"
-        launched_as_server = "/venv/bin/python -m tools.bigbrain.server --rank 0 --http-port 16980"
+        launched_by_controller = "/venv/bin/python -m bigbrain.worker --model-dir /m --rank 1 --total 4"
+        launched_by_run_node = "/venv/bin/python -m bigbrain.worker --rank 0 --http-port 16980"
+        launched_as_server = "/venv/bin/python -m bigbrain.server --rank 0 --http-port 16980"
         launched_by_wrapper_worker = ("/venv/bin/python -c import sys; sys.path.insert(0, chr(46)); import launch_wrapper; "
-                                      "launch_wrapper.install(); from tools.bigbrain import worker; sys.exit(worker.main()) --rank 1")
+                                      "launch_wrapper.install(); from bigbrain import worker; sys.exit(worker.main()) --rank 1")
         launched_by_wrapper_server = ("bash -c cd /tmp/bigbrain_stage/r && WRAPPER_OUT=t.json /venv/bin/python -c 'import sys; "
-                                      "import launch_wrapper; from tools.bigbrain import server; sys.exit(server.main())' --rank 0")
+                                      "import launch_wrapper; from bigbrain import server; sys.exit(server.main())' --rank 0")
         for line in (launched_by_controller, launched_by_run_node, launched_as_server,
                      launched_by_wrapper_worker, launched_by_wrapper_server):
             assert rx.search(line), line
-        for line in ("/venv/bin/python -m tools.bigbrain.controller --gpus a:0",       # the controller CLI itself is not a node
-                     "/venv/bin/python -m tools.bigbrain.bench grid --url http://x",
+        for line in ("/venv/bin/python -m bigbrain.controller --gpus a:0",       # the controller CLI itself is not a node
+                     "/venv/bin/python -m bigbrain.bench grid --url http://x",
                      "/venv/bin/python main.py --config configs/tabby-5000.yml",
-                     "grep tools.bigbrainXworker", "tail -f node_0.log"):
+                     "grep bigbrainXworker", "tail -f node_0.log",
+                     # the package is a top-level name now: it must not match inside a longer name, a path or a host name
+                     "/venv/bin/python -m mybigbrain.worker --rank 1", "ls /opt/bigbrain.server/logs",
+                     "curl http://bigbrain.server.example:16980/health", "ssh ops@bigbrain.worker.lan uptime",
+                     "pip install bigbrain"):
             assert not rx.search(line), line
         cmd = teardown_command("/tmp/bigbrain_stage/run1")
         assert f'pgrep -f "{NODE_PROCESS_PATTERN}"' in cmd
@@ -178,7 +182,7 @@ class TestBuildCommands:
         assert "--in-port 6001" in c1
         # common bits
         for c in (c0, c1):
-            assert "-m tools.bigbrain.worker" in c
+            assert "-m bigbrain.worker" in c
             assert "--total 2" in c
             assert "--model-dir /m" in c
 
@@ -303,26 +307,27 @@ class TestStagingAndFlags:
         plan = _plan([_node(0, "h0", 0, 0, 20, 0)], 20)
         c0 = plan.build_commands()[0]
         assert c0.startswith("cd /tmp/bigbrain && ")
-        assert "-m tools.bigbrain.worker" in c0
+        assert "-m bigbrain.worker" in c0
 
     def test_stage_package_stages_all_files(self, tmp_path, monkeypatch):
-        # Use the real package dir so content round-trips byte-for-byte.
+        # Use the real (imported, so installed or checked-out) package dir so content round-trips byte-for-byte.
         from pathlib import Path
-        from tools.bigbrain.controller import PACKAGE_FILES, stage_package
-        pkg_dir = str(Path(__file__).resolve().parent.parent / "tools" / "bigbrain")
+        import bigbrain
+        from bigbrain.controller import PACKAGE_FILES, stage_package
+        pkg_dir = str(Path(bigbrain.__file__).resolve().parent)
         calls = []
 
         def fake_stager(host, user, remote_path, content):
             calls.append((host, user, remote_path, content))
 
         staged = stage_package("h0", "u", pkg_dir, "/tmp/bigbrain", stager=fake_stager)
-        assert len(staged) == len(PACKAGE_FILES) == 9
+        assert len(staged) == len(PACKAGE_FILES) == 8
+        assert all(s.startswith("/tmp/bigbrain/bigbrain/") for s in staged)         # <stage>/bigbrain/*.py: what `-m bigbrain.worker` imports
         # every file went to the right remote path with the right bytes
         for (host, user, remote_path, content) in calls:
             assert (host, user) == ("h0", "u")
             rel = remote_path[len("/tmp/bigbrain/"):]
-            src = Path(pkg_dir).parent.parent / rel
-            expect = src.read_text(encoding="utf-8") if src.exists() else ""
+            expect = (Path(pkg_dir).parent / rel).read_text(encoding="utf-8")
             assert content == expect, rel
 
     def test_launch_stages_once_per_host_then_starts_reverse(self):
@@ -339,7 +344,7 @@ class TestStagingAndFlags:
         ctl.launch()
         # staged exactly ONCE per unique host (one stage_package call = one copy of PACKAGE_FILES);
         # h0 appears twice in nodes but is staged a single time
-        from tools.bigbrain.controller import PACKAGE_FILES
+        from bigbrain.controller import PACKAGE_FILES
         assert staged_hosts.count("h0") == len(PACKAGE_FILES)
         assert staged_hosts.count("h1") == len(PACKAGE_FILES)
         assert len(set(staged_hosts)) == 2
@@ -357,7 +362,7 @@ class TestStagingAndFlags:
 
 class TestPlanAuto:
     def test_even_split(self):
-        from tools.bigbrain.controller import plan_auto
+        from bigbrain.controller import plan_auto
         plan = plan_auto("/m", [("h0", 0), ("h1", 0)], total_blocks=28)
         assert [(n.slice_start, n.slice_end) for n in plan.nodes] == [(0, 14), (14, 28)]
         assert plan.nodes[0].in_port == 0 and plan.nodes[1].in_port == 16900
@@ -366,7 +371,7 @@ class TestPlanAuto:
         assert plan.validate() == []
 
     def test_uneven_split_gives_extra_to_early_nodes(self):
-        from tools.bigbrain.controller import plan_auto
+        from bigbrain.controller import plan_auto
         # 28 layers over 3 gpus -> 10, 9, 9
         plan = plan_auto("/m", [("h0", 0), ("h1", 0), ("h2", 0)], total_blocks=28)
         assert [(n.slice_start, n.slice_end) for n in plan.nodes] == \
@@ -374,7 +379,7 @@ class TestPlanAuto:
         assert plan.validate() == []
 
     def test_multi_machine_mixed_gpus(self):
-        from tools.bigbrain.controller import plan_auto
+        from bigbrain.controller import plan_auto
         plan = plan_auto("/m", [("10.0.0.11", 0), ("10.0.0.12", 1),
                                 ("10.0.0.13", 0)], total_blocks=64)
         assert [n.host for n in plan.nodes] == \
@@ -386,14 +391,14 @@ class TestPlanAuto:
         assert plan.validate() == []
 
     def test_single_gpu_is_whole_model(self):
-        from tools.bigbrain.controller import plan_auto
+        from bigbrain.controller import plan_auto
         plan = plan_auto("/m", [("h0", 0)], total_blocks=28)
         assert [(n.slice_start, n.slice_end) for n in plan.nodes] == [(0, 28)]
         assert plan.nodes[0].in_port == 0
         assert plan.validate() == []
 
     def test_more_gpus_than_layers_raises(self):
-        from tools.bigbrain.controller import plan_auto
+        from bigbrain.controller import plan_auto
         import pytest
         with pytest.raises(ValueError):
             plan_auto("/m", [("h0", 0), ("h1", 0), ("h2", 0), ("h3", 0)],

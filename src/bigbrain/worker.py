@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/worker.py -- one BigBrain pipeline node.
+"""bigbrain/worker.py -- one BigBrain pipeline node.
 
 Loads a CONTIGUOUS slice of an exllamav3 model's transformer layers onto one
 local GPU and participates in a cross-machine pipeline-parallel generate. Node
 0 owns the tokenizer + Embedding (first slice); the last node owns RMSNorm +
 lm_head and does the SAMPLING (only the token id returns to node 0, not the
 ~1 MB logits row). Between nodes the residual hidden state (1, seq, hidden)
-hops over tools/bigbrain/pipe.py (v2 frames: request id + position).
+hops over bigbrain/pipe.py (v2 frames: request id + position).
 
 Runs inside a Python environment that has exllamav3 and torch (for example a TabbyAPI venv;
 they are imported lazily, so the pure logic stays importable for tests), deployed to a GPU machine and launched by
-the cluster controller. Node 0 may instead run tools/bigbrain/server.py (an
+the cluster controller. Node 0 may instead run bigbrain/server.py (an
 OpenAI-compatible endpoint), which drives the same SliceWorker.
 
 Slice-load mechanics (exllamav3 1.4.8 .. 1.6.1):
@@ -101,7 +101,7 @@ prefill; harmless for KV attention, but a recurrent layer would consume that
 token twice.)
 
 Usage (one-shot; the controller's form):
-  python -m tools.bigbrain.worker --model-dir DIR --device cuda:0 \\
+  python -m bigbrain.worker --model-dir DIR --device cuda:0 \\
       --slice START END --rank R --total T [--in-port P] \\
       [--next-host H --next-port P] [--token-host H --token-port P] \\
       [--prompt "..."] [--max-new N] [--max-num-tokens M] \\
@@ -1612,7 +1612,7 @@ def worker_from_args(args) -> SliceWorker:
 def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if any(a == "--http-port" or a.startswith("--http-port=") for a in raw):
-        # SERVING mode: the controller launches node 0 as `-m tools.bigbrain.worker ... --http-port N
+        # SERVING mode: the controller launches node 0 as `-m bigbrain.worker ... --http-port N
         # --api-token T`. Node 0 is the OpenAI server (server.py); the worker's own parser has no
         # HTTP flags, so hand the whole command line over.
         from .server import main as server_main

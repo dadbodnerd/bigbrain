@@ -3,12 +3,12 @@
 # Copyright (c) 2026 dadbodnerd
 """deploy/verify_stage.py -- READ-ONLY: is what a host holds exactly what a commit says?
 
-    python deploy/verify_stage.py --commit v0.1.1 --host alpha --stage /tmp/bigbrain
-    python deploy/verify_stage.py --commit v0.1.1 --host alpha --release ~/bigbrain/releases/<short>
-    python deploy/verify_stage.py --commit v0.1.1 --stage ./stage_dir            # no --host: a local directory
+    python deploy/verify_stage.py --commit v0.2.0 --host alpha --stage /tmp/bigbrain
+    python deploy/verify_stage.py --commit v0.2.0 --host alpha --release ~/bigbrain/releases/<short>
+    python deploy/verify_stage.py --commit v0.2.0 --stage ./stage_dir            # no --host: a local directory
 
---stage   a node's stage dir: the files the controller stages (controller.PACKAGE_FILES: tools/__init__.py and the 8 runtime
-          files). Each is compared with `git show <commit>:<path>` (tools/__init__.py must be the empty file).
+--stage   a node's stage dir: the files the controller stages (controller.PACKAGE_FILES: the 8 files of the `bigbrain` package
+          a node runs, e.g. bigbrain/pipe.py). Each is compared with `git show <commit>:src/<path>`.
 --release a release dir made by deploy/release.py: every file the commit tracks, plus BUILD = the full commit hash.
 
 Per file: IDENTICAL (same bytes), IDENTICAL-LF (same after CRLF -> LF: what a stage dir reads like when it was staged from a CRLF
@@ -27,7 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import release  # noqa: E402
+import release  # noqa: E402  (also makes `bigbrain` importable from this checkout's src/ when it is not pip-installed)
 
 REPO = release.REPO
 
@@ -48,21 +48,23 @@ print(json.dumps(out))
 '''
 
 
+#: where the staged package lives in the repo: the controller stages `bigbrain/pipe.py`, the commit tracks `src/bigbrain/pipe.py`
+SRC_PREFIX = "src/"
+
+
 def package_files() -> list:
     """The files the controller stages to a node (read from the controller itself, so the two cannot disagree)."""
-    sys.path.insert(0, str(REPO))
-    from tools.bigbrain.controller import PACKAGE_FILES  # noqa: PLC0415
+    from bigbrain.controller import PACKAGE_FILES  # noqa: PLC0415
     return list(PACKAGE_FILES)
 
 
-def expected_hashes(commit: str, paths: list) -> dict:
+def expected_hashes(commit: str, paths: list, prefix: str = "") -> dict:
+    """{path: bytes of that file at `commit`, or None when the commit does not track it}. `prefix` is put in front of each path
+    for the lookup only (--stage: SRC_PREFIX); the result is keyed by the path as given."""
     out = {}
     for rel in paths:
-        p = subprocess.run(["git", "-C", str(REPO), "show", f"{commit}:{rel}"], capture_output=True)
-        if p.returncode != 0:
-            out[rel] = b"" if rel == "tools/__init__.py" else None        # the controller writes tools/__init__.py itself
-        else:
-            out[rel] = p.stdout
+        p = subprocess.run(["git", "-C", str(REPO), "show", f"{commit}:{prefix}{rel}"], capture_output=True)
+        out[rel] = p.stdout if p.returncode == 0 else None
     return out
 
 
@@ -125,7 +127,7 @@ def main(argv=None) -> int:
     full = release.resolve_commit(a.commit)
     root = a.stage or a.release
     paths = package_files() if a.stage else tracked_files(full)
-    expected = expected_hashes(full, paths)
+    expected = expected_hashes(full, paths, SRC_PREFIX if a.stage else "")
     if a.release:
         expected["BUILD"] = (full + "\n").encode("ascii")
     try:

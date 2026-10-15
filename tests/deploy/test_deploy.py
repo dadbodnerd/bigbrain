@@ -15,9 +15,8 @@ import pytest
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT / "deploy"))
-sys.path.insert(0, str(ROOT))
 
-import release  # noqa: E402
+import release  # noqa: E402  (deploy/ is repo-only tooling; release.py makes src/ importable only when `bigbrain` is not installed)
 import verify_stage  # noqa: E402
 
 HAS_GIT_REPO = (ROOT / ".git").exists() and shutil.which("git") is not None
@@ -34,9 +33,9 @@ def test_release_installs_the_commit_read_only_with_the_full_hash_in_build(tmp_p
     assert release.main(["--commit", "HEAD", "--to-dir", str(tmp_path)]) == 0
     rel = tmp_path / release.short_of(full)
     assert (rel / "BUILD").read_text(encoding="ascii") == full + "\n"
-    assert (rel / "tools" / "bigbrain" / "worker.py").is_file()
-    assert not (rel / "tools" / "__init__.py").exists()                       # PEP 420: not in a release either
-    assert _is_readonly_posix(rel / "BUILD") and _is_readonly_posix(rel / "tools" / "bigbrain" / "pipe.py")
+    assert (rel / "src" / "bigbrain" / "worker.py").is_file() and (rel / "pyproject.toml").is_file()
+    assert not (rel / "tools").exists()                                        # the pre-0.2 layout is gone from a release too
+    assert _is_readonly_posix(rel / "BUILD") and _is_readonly_posix(rel / "src" / "bigbrain" / "pipe.py")
     assert not list(tmp_path.glob(".*.partial")), "a finished release leaves no .partial dir"
     link = tmp_path / "current"
     assert (link.is_symlink() and os.readlink(link) == release.short_of(full)) or (tmp_path / "current.txt").exists()
@@ -87,8 +86,7 @@ def _make_stage(tmp_path, crlf=False):
     for rel in verify_stage.package_files():
         dst = stage / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        src = ROOT / rel
-        data = src.read_bytes() if src.exists() else b""                       # tools/__init__.py is synthesized by the controller
+        data = (ROOT / "src" / rel).read_bytes()                               # staged as bigbrain/x.py, tracked as src/bigbrain/x.py
         dst.write_bytes(data.replace(b"\n", b"\r\n") if crlf and data else data)
     return stage
 
@@ -114,11 +112,11 @@ def test_a_crlf_stage_dir_is_identical_after_lf_but_fails_strict(tmp_path, capsy
 @needs_repo
 def test_a_changed_or_missing_file_is_reported(tmp_path, capsys):
     stage = _make_stage(tmp_path)
-    (stage / "tools" / "bigbrain" / "pipe.py").write_bytes(b"# edited\n")
-    (stage / "tools" / "bigbrain" / "draft.py").unlink()
+    (stage / "bigbrain" / "pipe.py").write_bytes(b"# edited\n")
+    (stage / "bigbrain" / "draft.py").unlink()
     assert verify_stage.main(["--commit", "HEAD", "--stage", str(stage)]) == 1
     out = capsys.readouterr().out
-    assert "DIFFERENT     tools/bigbrain/pipe.py" in out and "MISSING       tools/bigbrain/draft.py" in out
+    assert "DIFFERENT     bigbrain/pipe.py" in out and "MISSING       bigbrain/draft.py" in out
 
 
 @needs_repo
@@ -141,9 +139,9 @@ def test_compare_words():
 
 def test_the_stage_file_list_comes_from_the_controller():
     files = verify_stage.package_files()
-    assert files[0] == "tools/__init__.py" and len(files) == 9
-    assert {Path(f).name for f in files[1:]} == {"__init__.py", "pipe.py", "worker.py", "server.py", "engine.py", "paged.py",
-                                                 "spec.py", "draft.py"}
+    assert len(files) == 8 and all(f.startswith("bigbrain/") for f in files)
+    assert {Path(f).name for f in files} == {"__init__.py", "pipe.py", "worker.py", "server.py", "engine.py", "paged.py",
+                                             "spec.py", "draft.py"}
 
 
 # -- run_node.sh and the unit ------------------------------------------------------------------------------------------
@@ -168,7 +166,7 @@ def test_run_node_sh_parses_and_checks_its_inputs(tmp_path):
 def test_run_node_sh_has_no_server_mode_and_always_starts_the_worker_module():
     text = (ROOT / "deploy" / "run_node.sh").read_text(encoding="utf-8")
     code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    assert "tools.bigbrain.worker" in code and "tools.bigbrain.server" not in code and "worker|server" not in text
+    assert "bigbrain.worker" in code and "bigbrain.server" not in code and "worker|server" not in text
     assert "mod=" not in code and "$mod" not in code
     unit = (ROOT / "deploy" / "bigbrain-node@.service").read_text(encoding="utf-8")
     assert "run_node.sh /%I worker" not in unit and "run_node.sh /%I server" not in unit
@@ -178,9 +176,9 @@ def test_run_node_sh_has_no_server_mode_and_always_starts_the_worker_module():
 def test_run_node_sh_runs_the_module_from_the_stage_dir_with_its_args(tmp_path):
     """cwd = the stage dir (the controller's teardown matches on it) and the argv is node.args."""
     stage = tmp_path / "stage"
-    (stage / "tools" / "bigbrain").mkdir(parents=True)
-    (stage / "tools" / "bigbrain" / "__init__.py").write_text("")
-    (stage / "tools" / "bigbrain" / "worker.py").write_text(
+    (stage / "bigbrain").mkdir(parents=True)
+    (stage / "bigbrain" / "__init__.py").write_text("")
+    (stage / "bigbrain" / "worker.py").write_text(
         "import os, sys\nprint('cwd=' + os.getcwd())\nprint('argv=' + ' '.join(sys.argv[1:]))\n")
     (stage / "node.args").write_text("--rank 3 --total 4\n")
     (stage / "node.env").write_text(f'BB_PYTHON="{sys.executable.replace(chr(92), "/")}"\n')

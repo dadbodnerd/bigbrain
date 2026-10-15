@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/merge_models.py -- add measured models to model_registry.json and mark what is no longer on disk, WITHOUT touching
+"""bigbrain/merge_models.py -- add measured models to model_registry.json and mark what is no longer on disk, WITHOUT touching
 anything else in the file (nodes, GPU uuids and indices, notes, other models).
 
-    python -m tools.bigbrain.merge_models --registry PATH --update update.json            # dry run: prints what would change
-    python -m tools.bigbrain.merge_models --registry PATH --update update.json --write    # backs the file up (.bak-<stamp>), then replaces it
+    python -m bigbrain.merge_models --registry PATH --update update.json            # dry run: prints what would change
+    python -m bigbrain.merge_models --registry PATH --update update.json --write    # backs the file up (.bak-<stamp>), then replaces it
 
 `update.json` (written by a read-only measuring pass over ssh) has:
     add          {model name: full registry entry}      new models, or a known one whose entry is missing facts
@@ -72,7 +72,7 @@ def merge(reg: Dict[str, Any], upd: Dict[str, Any], now: str = "") -> Tuple[Dict
                     info.pop("missing_on", None)
                     report.append(f"{name}: present again")
     if report:
-        new["_models_refreshed"] = {"at": now or time.strftime("%Y-%m-%dT%H:%M:%S"), "by": "tools/bigbrain/merge_models.py",
+        new["_models_refreshed"] = {"at": now or time.strftime("%Y-%m-%dT%H:%M:%S"), "by": "bigbrain/merge_models.py",
                                     "notes": [str(n) for n in (upd.get("notes") or [])][:10]}
     return new, report
 

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/server.py -- an OpenAI-compatible endpoint on BigBrain node 0.
+"""bigbrain/server.py -- an OpenAI-compatible endpoint on BigBrain node 0.
 
-Runs IN PLACE OF `python -m tools.bigbrain.worker` on node 0 (it takes every
+Runs IN PLACE OF `python -m bigbrain.worker` on node 0 (it takes every
 node-placement flag the worker takes, plus the HTTP flags below) and drives
 the same SliceWorker, so any OpenAI-compatible client calls the big model like any
 other endpoint. Nodes 1..T-1 run the plain worker, which serves any number of
@@ -1308,7 +1308,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(asctime)s bigbrain.server[%(process)d] %(levelname)s %(message)s")
     if args.rank != 0:
-        raise SystemExit("server.py runs on node 0 (--rank 0); other nodes run tools.bigbrain.worker")
+        raise SystemExit("server.py runs on node 0 (--rank 0); other nodes run bigbrain.worker")
     api_key = resolve_api_key(args.api_key_file, args.api_key_env, args.insecure_no_auth,
                               token=args.api_token)
     if api_key is None:

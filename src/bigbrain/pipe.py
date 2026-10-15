@@ -141,7 +141,7 @@ def unpack_header(data: bytes) -> Dict:
         raise BigBrainProtocolError(
             f"unsupported version {version} (this build speaks "
             f"{', '.join(str(v) for v in SUPPORTED_VERSIONS)}; are both ends "
-            f"staged from the same tools/bigbrain/pipe.py?)")
+            f"staged from the same bigbrain/pipe.py?)")
     request_id = position = 0
     size = HEADER_SIZE_V1
     if version >= 2:

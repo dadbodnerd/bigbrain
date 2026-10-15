@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/site.py: where the site file is read from, what it may say, and that every consumer (controller, registry,
+"""bigbrain/site.py: where the site file is read from, what it may say, and that every consumer (controller, registry,
 build_registry, deploy/release.py, patches/verify.py) takes its site-specific values from it and from nothing else."""
 import getpass
 import sys
@@ -11,10 +11,11 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "deploy"))
 sys.path.insert(0, str(ROOT / "patches"))
+needs_patches = pytest.mark.skipif(not (ROOT / "patches").is_dir(), reason="patches/ is not in an sdist (repo-only tooling)")
 
-from tools.bigbrain import build_registry as br  # noqa: E402
-from tools.bigbrain import controller as ctl  # noqa: E402
-from tools.bigbrain import site  # noqa: E402
+from bigbrain import build_registry as br  # noqa: E402
+from bigbrain import controller as ctl  # noqa: E402
+from bigbrain import site  # noqa: E402
 
 FULL = """
 [ssh]
@@ -192,6 +193,7 @@ def test_release_resolves_a_host_name_through_the_site_file(site_file, monkeypat
     assert "carol@10.0.0.5" in seen[1]
 
 
+@needs_patches
 def test_verify_takes_its_hosts_from_a_file_the_env_var_or_the_site(site_file, tmp_path, monkeypatch):
     import verify
     assert verify.load_pins()["hosts"] == {}
@@ -205,6 +207,7 @@ def test_verify_takes_its_hosts_from_a_file_the_env_var_or_the_site(site_file, t
     assert list(verify.load_pins()["hosts"]) == ["x"]
 
 
+@needs_patches
 def test_verify_with_no_hosts_says_what_to_pass(capsys):
     import verify
     with pytest.raises(SystemExit) as e:
@@ -214,6 +217,7 @@ def test_verify_with_no_hosts_says_what_to_pass(capsys):
     assert "--hosts" in err and "hosts.example.toml" in err
 
 
+@needs_patches
 def test_verify_resolves_an_ssh_name_through_the_site_file(site_file, tmp_path, monkeypatch):
     import verify
     site_file()

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""Tests for the BigBrain server's per-request stats record (tools/bigbrain/server.py).
+"""Tests for the BigBrain server's per-request stats record (bigbrain/server.py).
 
 StatsRecorder is exercised on a fake clock (exact numbers); the HTTP route and the /health
 `stats` block are exercised against a byte-level fake engine over loopback. No GPU, no
@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools.bigbrain.server import (
+from bigbrain.server import (
     BigBrainApp,
     ChatTemplate,
     JOB_LABEL_MAX,

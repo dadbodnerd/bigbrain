@@ -23,15 +23,15 @@ import pytest
 
 from bigbrain_speed_fakes import (H, KINDS_FULL, KINDS_MIXED, V, FakeCache, FakeModel,
                                   FakeSWAState, fake_advance_recurrent_states, oracle_greedy)
-from tools.bigbrain.draft import ExllamaDraftForward, check_same_tokenizer
-from tools.bigbrain.engine import (BigBrainRemoteError, EngineConfig, EngineDead,
+from bigbrain.draft import ExllamaDraftForward, check_same_tokenizer
+from bigbrain.engine import (BigBrainRemoteError, EngineConfig, EngineDead,
                                    PipelineEngine)
-from tools.bigbrain.paged import (PAGE_SIZE, BigBrainStateError, NodeStats, PagedSlots,
+from bigbrain.paged import (PAGE_SIZE, BigBrainStateError, NodeStats, PagedSlots,
                                   StepMeta, StepRow, pack_rows, unpack_rows)
-from tools.bigbrain.pipe import BigBrainLink
-from tools.bigbrain.spec import (AdaptiveWindow, DraftForward, DraftModelDrafter, DraftRequest,
+from bigbrain.pipe import BigBrainLink
+from bigbrain.spec import (AdaptiveWindow, DraftForward, DraftModelDrafter, DraftRequest,
                                  NgramDrafter, SpecConfig, SpecStats, greedy_accept, make_drafter)
-from tools.bigbrain.worker import (SamplingSettings, SliceWorker, _select_slice, make_cache)
+from bigbrain.worker import (SamplingSettings, SliceWorker, _select_slice, make_cache)
 
 
 def _torch():

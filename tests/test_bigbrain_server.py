@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""Tests for tools/bigbrain/server.py -- the OpenAI-compatible endpoint on node 0.
+"""Tests for bigbrain/server.py -- the OpenAI-compatible endpoint on node 0.
 
 No GPU, no exllamav3. A byte-level FakeEngine (token id = one UTF-8 byte, so
 a multi-byte character really is split across tokens) stands in for the
@@ -21,7 +21,7 @@ from contextlib import closing
 import numpy as np
 import pytest
 
-from tools.bigbrain.server import (
+from bigbrain.server import (
     BigBrainApp,
     ChatTemplate,
     IncrementalDetokenizer,
@@ -33,7 +33,7 @@ from tools.bigbrain.server import (
     resolve_api_key,
     serve_in_thread,
 )
-from tools.bigbrain.worker import SamplingSettings
+from bigbrain.worker import SamplingSettings
 
 KEY = "test-key-0123456789abcdef"
 EOS = 256
@@ -162,7 +162,7 @@ def test_template_fallback_is_chatml(tmp_path):
 
 
 def test_template_fallback_when_jinja2_is_missing(tmp_path, monkeypatch):
-    import tools.bigbrain.server as srv
+    import bigbrain.server as srv
     (tmp_path / "chat_template.jinja").write_text("{{ 'JINJA' }}", encoding="utf-8")
     monkeypatch.setattr(srv, "_jinja_env", lambda: None)
     t = ChatTemplate.from_model_dir(str(tmp_path))
@@ -542,8 +542,8 @@ def test_parity_check_http_mode_against_a_running_server(make_server, tmp_path, 
     """parity_check http: the reference dump's prompt ids go to
     /v1/bigbrain/generate (greedy, ignore_eos, return_logits) and the answer is
     compared token-for-token and logit-for-logit."""
-    from tools.bigbrain.parity_check import main as parity_main
-    from tools.bigbrain.worker import write_dump
+    from bigbrain.parity_check import main as parity_main
+    from bigbrain.worker import write_dump
     script = list(b"abcd") + [EOS] + list(b"ef")
     eng = FakeEngine(script)
     app, port = make_server(eng)

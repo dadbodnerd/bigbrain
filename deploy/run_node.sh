@@ -5,12 +5,12 @@
 #
 #   run_node.sh <stage-dir>
 #
-# It always starts `-m tools.bigbrain.worker`, node 0 included: worker.main hands any command line that contains --http-port
+# It always starts `-m bigbrain.worker`, node 0 included: worker.main hands any command line that contains --http-port
 # to server.main, so node 0 comes out as the OpenAI endpoint. There is no `server` mode here: the controller's teardown
 # is written for the worker module.
 #
-# The stage dir holds the staged package (tools/__init__.py + tools/bigbrain/*.py, as the controller or your own launch script put
-# it there) and two small files written by whoever starts the run:
+# The stage dir holds the staged package (bigbrain/*.py, as the controller or your own launch script put it there; a BB_PYTHON
+# environment that already has `pip install bigbrain` needs no staged copy) and two small files written by whoever starts the run:
 #   node.args   the node's command line, one line, e.g.
 #               --model-dir /data/models/X --device cuda:0 --slice 0 10 --rank 0 --total 4 --http-port 16980 --api-key-file api_key ...
 #               Never put a key in it: use --api-key-file api_key (a 0600 file in the stage dir).
@@ -32,4 +32,4 @@ fi
 : "${BB_PYTHON:?run_node.sh: set BB_PYTHON (the venv python that has exllamav3) in $stage/node.env}"
 export CUDA_DEVICE_ORDER="${CUDA_DEVICE_ORDER:-PCI_BUS_ID}"
 # shellcheck disable=SC2046
-exec "$BB_PYTHON" -m tools.bigbrain.worker $(cat node.args)
+exec "$BB_PYTHON" -m bigbrain.worker $(cat node.args)

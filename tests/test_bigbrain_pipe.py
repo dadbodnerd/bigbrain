@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""Tests for the BigBrain wire protocol (tools/bigbrain/pipe.py).
+"""Tests for the BigBrain wire protocol (bigbrain/pipe.py).
 
 Loopback sockets only: no GPU, no external network, no production queue.
 """
@@ -13,7 +13,7 @@ import time
 import numpy as np
 import pytest
 
-from tools.bigbrain.pipe import (
+from bigbrain.pipe import (
     FLAG_PREFILL,
     HEADER_FMT,
     HEADER_FMT_V1,
@@ -260,7 +260,7 @@ class TestControl:
             client._hb_thread.join(2.0)
             box = {}
             rx = threading.Thread(target=lambda: box.setdefault("a", server.recv_activation(expected_shape=(1, 2, 4))), daemon=True)
-            with caplog.at_level(logging.WARNING, logger="tools.bigbrain.pipe"):
+            with caplog.at_level(logging.WARNING, logger="bigbrain.pipe"):
                 rx.start()
                 time.sleep(2.3)
                 client.send_activation(np.ones((1, 2, 4), dtype=np.float16), last_chunk=True)

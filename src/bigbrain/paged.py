@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-"""tools/bigbrain/paged.py -- everything a BigBrain node needs to serve SEVERAL
+"""bigbrain/paged.py -- everything a BigBrain node needs to serve SEVERAL
 sequences at once from one exllamav3 Cache.
 
 SLOTS. A node's Cache is built for `n_slots` sequences: slot s owns the pages

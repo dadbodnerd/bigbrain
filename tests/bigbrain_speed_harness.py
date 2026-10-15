@@ -13,12 +13,12 @@ import pytest
 
 from bigbrain_speed_fakes import (KINDS_MIXED, V, FakeCache, FakeModel,
                                   fake_advance_recurrent_states, oracle_greedy)
-from tools.bigbrain.draft import ExllamaDraftForward
-from tools.bigbrain.engine import EngineConfig, PipelineEngine
-from tools.bigbrain.paged import PagedSlots
-from tools.bigbrain.pipe import BigBrainLink
-from tools.bigbrain.spec import DraftModelDrafter, SpecConfig
-from tools.bigbrain.worker import SamplingSettings, SliceWorker, _select_slice, make_cache
+from bigbrain.draft import ExllamaDraftForward
+from bigbrain.engine import EngineConfig, PipelineEngine
+from bigbrain.paged import PagedSlots
+from bigbrain.pipe import BigBrainLink
+from bigbrain.spec import DraftModelDrafter, SpecConfig
+from bigbrain.worker import SamplingSettings, SliceWorker, _select_slice, make_cache
 
 CTX = 256
 PROMPTS = (
@@ -184,7 +184,7 @@ KEY = "speed-test-key"
 
 
 def _server_pieces():
-    from tools.bigbrain.server import BigBrainApp, ChatTemplate, WorkerEngine, serve_in_thread
+    from bigbrain.server import BigBrainApp, ChatTemplate, WorkerEngine, serve_in_thread
     return BigBrainApp, ChatTemplate, WorkerEngine, serve_in_thread
 
 

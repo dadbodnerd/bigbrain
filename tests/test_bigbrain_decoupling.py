@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from tools.bigbrain import build_registry as br
-from tools.bigbrain import registry as reg
+from bigbrain import build_registry as br
+from bigbrain import registry as reg
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "bigbrain" / "model_registry_trimmed.json"
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "model_registry.example.json"
@@ -67,11 +67,12 @@ def test_an_env_var_pointing_nowhere_names_that_path(monkeypatch, tmp_path):
     assert str(gone) in str(e.value)
 
 
+@pytest.mark.skipif(not (Path(__file__).resolve().parent.parent / ".gitignore").is_file(), reason="an sdist carries no .gitignore")
 def test_the_package_dir_holds_no_registry_data():
     """A release dir never holds data (git archive of a commit): no model_registry.json is tracked beside registry.py."""
-    here = Path(reg.__file__).resolve().parent
-    tracked_by_gitignore = (here.parents[1] / ".gitignore").read_text(encoding="utf-8")
-    assert "/tools/bigbrain/model_registry.json" in tracked_by_gitignore
+    root = Path(__file__).resolve().parent.parent                 # the checkout (the installed package has no .gitignore beside it)
+    tracked_by_gitignore = (root / ".gitignore").read_text(encoding="utf-8")
+    assert "/src/bigbrain/model_registry.json" in tracked_by_gitignore
 
 
 # -- the sample and the trimmed fixture are real registries ------------------------------------------------------
