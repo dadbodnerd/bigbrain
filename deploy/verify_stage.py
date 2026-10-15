@@ -3,9 +3,9 @@
 # Copyright (c) 2026 dadbodnerd
 """deploy/verify_stage.py -- READ-ONLY: is what a host holds exactly what a commit says?
 
-    python deploy/verify_stage.py --commit v0.2.0 --host alpha --stage /tmp/bigbrain
-    python deploy/verify_stage.py --commit v0.2.0 --host alpha --release ~/bigbrain/releases/<short>
-    python deploy/verify_stage.py --commit v0.2.0 --stage ./stage_dir            # no --host: a local directory
+    python deploy/verify_stage.py --commit v0.2.1 --host alpha --stage "~/.cache/bigbrain/stage"
+    python deploy/verify_stage.py --commit v0.2.1 --host alpha --release ~/bigbrain/releases/<short>
+    python deploy/verify_stage.py --commit v0.2.1 --stage ./stage_dir            # no --host: a local directory
 
 --stage   a node's stage dir: the files the controller stages (controller.PACKAGE_FILES: the 8 files of the `bigbrain` package
           a node runs, e.g. bigbrain/pipe.py). Each is compared with `git show <commit>:src/<path>`.
@@ -79,7 +79,7 @@ def probe(host: str | None, root: str, paths: list) -> dict:
     else:
         target = release.site.ssh_target(host)
         prog = PROBE
-        res = subprocess.run([*release.SSH, target, "python3 - " + release.rpath(root) + " " + _q(json.dumps(paths))],
+        res = subprocess.run([*release.SSH, "--", target, "python3 - " + release.rpath(root) + " " + _q(json.dumps(paths))],
                              input=prog.encode(), capture_output=True)
         res.stdout = res.stdout.decode("utf-8", "replace") if isinstance(res.stdout, bytes) else res.stdout
         res.stderr = res.stderr.decode("utf-8", "replace") if isinstance(res.stderr, bytes) else res.stderr

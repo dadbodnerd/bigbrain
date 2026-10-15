@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import socket
 import struct
 import threading
@@ -93,6 +94,25 @@ FLAG_STREAMS_MASK = 0xFF << FLAG_STREAMS_SHIFT
 _FLAG_LAST_CHUNK = FLAG_LAST_CHUNK  # v1 name, kept for importers
 
 _DTYPE_TO_NP = {DT_FP16: np.float16, DT_FP32: np.float32}
+
+# Frame size caps (v0.2.1, security review M3). Every limit is checked on the HEADER, before the payload is read, so a peer cannot
+# make a node allocate what it names. A node narrows DEFAULT_MAX_FRAME_BYTES to what its model can legitimately send it
+# (frame_limit(); `--max-frame-mib` overrides).
+DEFAULT_MAX_FRAME_BYTES = 1 << 30      # 1 GiB: a link nobody narrowed (tests, embedding)
+MIN_FRAME_LIMIT = 64 << 20             # frame_limit() never answers less: room for a logits row and odd configs
+MAX_CONTROL_BYTES = 16 << 20           # one CONTROL frame (JSON)
+MAX_SMALL_PAYLOAD = 64 << 10           # a RESET reason; HEARTBEAT / READY / BYE carry nothing
+
+
+def frame_limit(hidden_size: int, max_tokens: int, *, streams: int = 1, vocab_size: int = 0, slack: int = 8) -> int:
+    """The largest frame a node of this model may receive: one activation of `max_tokens` x `hidden_size` x `streams` in fp32
+    (the widest wire dtype), or one fp32 logits row, times `slack` (a peer started with a larger --prefill-chunk, a stream count
+    the config does not name), and never less than MIN_FRAME_LIMIT."""
+    act = int(max_tokens) * int(hidden_size) * max(1, int(streams)) * 4
+    logits = int(vocab_size or 0) * 4
+    return max(MIN_FRAME_LIMIT, int(slack) * max(act, logits))
+
+
 _DEFAULT_WATCHDOG_S = 5.0
 _HEARTBEAT_INTERVAL_S = 0.5
 GAP_WARN_S = 2.0           # a frame arriving this long after the previous one is logged (a heartbeat is due every 0.5 s)
@@ -193,20 +213,32 @@ class Message:
         return bool(self.flags & FLAG_PREFILL)
 
 
-def _decode_array(header: Dict, payload: bytes) -> np.ndarray:
+def _array_shape(header: Dict) -> Tuple[Tuple[int, ...], int]:
+    """(shape, itemsize) an ACTIVATION / LOGITS header announces. Raises BigBrainProtocolError for an unsupported dtype or a zero
+    batch / hidden dimension (seq_len 0 is the terminator, an empty activation)."""
     np_dtype = _DTYPE_TO_NP.get(header["dtype"])
     if np_dtype is None:
         raise BigBrainProtocolError(
             f"dtype {header['dtype']} not supported (use fp16/fp32)")
-    streams = (header["flags"] & FLAG_STREAMS_MASK) >> FLAG_STREAMS_SHIFT
-    want = (header["batch"], header["seq_len"], header["hidden_dim"])
+    streams = (int(header["flags"]) & FLAG_STREAMS_MASK) >> FLAG_STREAMS_SHIFT
+    want = (int(header["batch"]), int(header["seq_len"]), int(header["hidden_dim"]))
     if streams > 1:
-        want = (header["batch"], header["seq_len"], streams, header["hidden_dim"])
-    itemsize = np.dtype(np_dtype).itemsize
-    if len(payload) != int(np.prod(want)) * itemsize:
+        want = (want[0], want[1], streams, want[2])
+    if want[0] < 1 or want[-1] < 1:
+        raise BigBrainProtocolError(f"activation shape {want} has a zero dimension")
+    return want, np.dtype(np_dtype).itemsize
+
+
+def _decode_array(header: Dict, payload: bytes) -> np.ndarray:
+    want, itemsize = _array_shape(header)
+    # math.prod on Python ints: np.prod wraps in int64, which let a huge shape pass this check with an empty payload
+    if len(payload) != math.prod(want) * itemsize:
         raise BigBrainProtocolError(
             f"payload {len(payload)} bytes does not match shape {want} x {itemsize} bytes")
-    return np.frombuffer(payload, dtype=np_dtype).reshape(want)
+    try:
+        return np.frombuffer(payload, dtype=_DTYPE_TO_NP[header["dtype"]]).reshape(want)
+    except (ValueError, TypeError) as exc:
+        raise BigBrainProtocolError(f"cannot decode a {want} array: {exc}") from None
 
 
 class BigBrainLink:
@@ -224,9 +256,12 @@ class BigBrainLink:
     the last frame (heartbeats included) arrived.
     """
 
-    def __init__(self, watchdog_s: float = _DEFAULT_WATCHDOG_S) -> None:
+    def __init__(self, watchdog_s: float = _DEFAULT_WATCHDOG_S,
+                 max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES) -> None:
         self._sock: Optional[socket.socket] = None
         self._watchdog_s = float(watchdog_s)
+        # the largest frame (and the largest chunked message) this link accepts; checked on the header, before the payload is read
+        self.max_frame_bytes = int(max_frame_bytes)
         self._seq_id = 0
         self._send_lock = threading.Lock()
         self._hb_thread: Optional[threading.Thread] = None
@@ -418,8 +453,51 @@ class BigBrainLink:
         self.send_activation(arr, request_id=request_id, position=position,
                              msgtype=MSG_LOGITS)
 
+    def _malformed(self, reason: str) -> BigBrainProtocolError:
+        """A peer sent something this build cannot accept: the stream can no longer be trusted (or is desynchronised), so the link
+        is marked dead and its connection closed at once -- the next call fails fast and the peer sees EOF. Returns the error for
+        the caller to raise (security review M3)."""
+        self._dead = True
+        self._hb_stop.set()
+        logger.error("link %s: %s; closing it", self._peer_label(), reason)
+        sock = self._sock
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self.close()
+        return BigBrainProtocolError(reason)
+
+    def _check_frame(self, header: Dict) -> None:
+        """Header-level checks, done BEFORE the payload is read: its size against this link's limit and against what the message
+        type can carry. Raises BigBrainProtocolError."""
+        mt, n = header["msgtype"], int(header["payload_len"])
+        if n > self.max_frame_bytes:
+            raise BigBrainProtocolError(
+                f"a {_KIND.get(mt, mt)} frame of {n} bytes is over this link's limit of {self.max_frame_bytes} bytes "
+                f"(--max-frame-mib raises it)")
+        if mt in (MSG_ACTIVATION, MSG_LOGITS):
+            want, itemsize = _array_shape(header)
+            if math.prod(want) * itemsize != n:
+                raise BigBrainProtocolError(
+                    f"payload {n} bytes does not match shape {want} x {itemsize} bytes")
+        elif mt == MSG_TOKEN:
+            if header["dtype"] != DT_U32 or n != 4 * int(header["seq_len"]):
+                raise BigBrainProtocolError(
+                    f"bad token frame: dtype {header['dtype']}, {header['seq_len']} ids, {n} payload bytes")
+        elif mt == MSG_CONTROL:
+            if n > MAX_CONTROL_BYTES:
+                raise BigBrainProtocolError(f"a control frame of {n} bytes is over the limit of {MAX_CONTROL_BYTES}")
+        elif mt in (MSG_HEARTBEAT, MSG_READY, MSG_BYE, MSG_RESET):
+            if n > MAX_SMALL_PAYLOAD:
+                raise BigBrainProtocolError(f"a {_KIND[mt]} frame of {n} bytes is over the limit of {MAX_SMALL_PAYLOAD}")
+        else:
+            raise BigBrainProtocolError(f"unknown msgtype {mt}")
+
     def recv_frame(self) -> Tuple[int, Dict, bytes]:
-        """Receive one frame. Returns (msgtype, header_dict, payload)."""
+        """Receive one frame. Returns (msgtype, header_dict, payload). A malformed header (bad magic or version, a payload over
+        the limit or not matching its shape, an unknown type) closes the link and raises BigBrainProtocolError."""
         if self._dead:
             raise BigBrainPeerDead("link is dead")
         base = self._recv_exact(HEADER_SIZE_V1)
@@ -427,10 +505,10 @@ class BigBrainLink:
             base += self._recv_exact(HEADER_EXT_SIZE)
         try:
             header = unpack_header(base)
-        except BigBrainProtocolError:
-            # Unknown framing: everything after this point is unreadable.
-            self._dead = True
-            raise
+            self._check_frame(header)
+        except BigBrainProtocolError as exc:
+            # Unknown framing, or a frame this node will not buffer: everything after this point is unreadable.
+            raise self._malformed(str(exc)) from None
         payload = self._recv_exact(int(header["payload_len"]))
         now = time.monotonic()
         gap = now - self.last_rx
@@ -460,10 +538,11 @@ class BigBrainLink:
             if msgtype != MSG_ACTIVATION:
                 raise BigBrainProtocolError(
                     f"unexpected msgtype {msgtype} in activation stream")
-            chunks.append(_decode_array(header, payload))
+            chunks.append(self._decode(header, payload))
             if header["flags"] & FLAG_LAST_CHUNK:
                 break
-        result = np.concatenate(chunks, axis=1) if len(chunks) > 1 else chunks[0]
+            self._check_assembled(chunks)
+        result = self._assemble(chunks)
         if expected_shape is not None and tuple(result.shape) != tuple(expected_shape):
             raise BigBrainProtocolError(
                 f"shape mismatch: got {tuple(result.shape)}, expected {tuple(expected_shape)}")
@@ -483,30 +562,30 @@ class BigBrainLink:
                     return Message("heartbeat", header)
                 continue
             if chunks and msgtype != chunk_type:
-                raise BigBrainProtocolError(
+                raise self._malformed(
                     f"msgtype {msgtype} interleaved inside a chunked "
                     f"{_KIND.get(chunk_type, chunk_type)} message")
             if msgtype in (MSG_ACTIVATION, MSG_LOGITS):
-                chunks.append(_decode_array(header, payload))
+                chunks.append(self._decode(header, payload))
                 if first is None:
                     first, chunk_type = header, msgtype
                 if header["flags"] & FLAG_LAST_CHUNK:
-                    arr = np.concatenate(chunks, axis=1) if len(chunks) > 1 else chunks[0]
-                    return Message(_KIND[msgtype], first, array=arr)
+                    return Message(_KIND[msgtype], first, array=self._assemble(chunks))
+                self._check_assembled(chunks)
                 continue
             if msgtype == MSG_CONTROL:
                 try:
                     obj = json.loads(payload.decode("utf-8"))
-                except (UnicodeDecodeError, ValueError) as exc:
-                    raise BigBrainProtocolError(f"control payload is not JSON: {exc}")
+                except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+                    raise self._malformed(f"control payload is not JSON: {type(exc).__name__}: {str(exc)[:200]}") from None
                 if not isinstance(obj, dict):
-                    raise BigBrainProtocolError(
+                    raise self._malformed(
                         f"control payload must be a JSON object, got {type(obj).__name__}")
                 return Message("control", header, control=obj)
             if msgtype == MSG_TOKEN:
                 n = int(header["seq_len"])
                 if header["dtype"] != DT_U32 or len(payload) != 4 * n:
-                    raise BigBrainProtocolError(
+                    raise self._malformed(
                         f"bad token frame: dtype {header['dtype']}, {n} ids, "
                         f"{len(payload)} payload bytes")
                 ids = np.frombuffer(payload, dtype="<u4").astype(np.int64).tolist()
@@ -517,7 +596,28 @@ class BigBrainLink:
                 return Message("bye", header)
             if msgtype == MSG_READY:
                 return Message("ready", header)
-            raise BigBrainProtocolError(f"unknown msgtype {msgtype}")
+            raise self._malformed(f"unknown msgtype {msgtype}")
+
+    def _decode(self, header: Dict, payload: bytes) -> np.ndarray:
+        try:
+            return _decode_array(header, payload)
+        except BigBrainProtocolError as exc:
+            raise self._malformed(str(exc)) from None
+
+    def _check_assembled(self, chunks: List[np.ndarray]) -> None:
+        """A chunked message may not grow past the frame limit either (chunks without a last one would otherwise buffer forever)."""
+        total = sum(int(c.nbytes) for c in chunks)
+        if total > self.max_frame_bytes:
+            raise self._malformed(f"a chunked message of {total} bytes so far is over this link's limit of "
+                                  f"{self.max_frame_bytes} bytes")
+
+    def _assemble(self, chunks: List[np.ndarray]) -> np.ndarray:
+        if len(chunks) == 1:
+            return chunks[0]
+        try:
+            return np.concatenate(chunks, axis=1)
+        except ValueError as exc:            # chunks whose shapes do not line up
+            raise self._malformed(f"the chunks of one message do not fit together: {exc}") from None
 
     # ------------------------------------------------------------- lifecycle
 

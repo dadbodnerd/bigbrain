@@ -132,8 +132,8 @@ import numpy as np
 
 from .paged import (PROTO, BigBrainStateError, NodeStats, PagedSlots, StepMeta,
                     pack_rows, unpack_rows)
-from .pipe import (FLAG_PREFILL, BigBrainLink, BigBrainPeerDead,
-                   BigBrainProtocolError, Message)
+from .pipe import (DEFAULT_MAX_FRAME_BYTES, FLAG_PREFILL, BigBrainLink, BigBrainPeerDead,
+                   BigBrainProtocolError, Message, frame_limit)
 from .spec import greedy_accept
 
 log = logging.getLogger("bigbrain.worker")
@@ -545,7 +545,7 @@ class SliceWorker:
                  prefill_chunk: int = 2048, max_batch_size: int = 1,
                  rebase_layers: bool = False, bind_host: str = "0.0.0.0",
                  connect_settle_s: float = 1.5, slots: int = 1, max_draft: int = 0,
-                 async_send: Optional[bool] = None, diag: bool = False):
+                 async_send: Optional[bool] = None, diag: bool = False, max_frame_mib: float = 0.0):
         torch = _torch()
         from exllamav3 import Config, Model, Cache, Tokenizer
 
@@ -593,7 +593,8 @@ class SliceWorker:
                            device=model.modules[0].device, max_num_tokens=max_num_tokens,
                            prefill_chunk=prefill_chunk, advance_fn=_load_advance_fn(),
                            inbound=inbound, outbound=outbound, token_link=token_link,
-                           slots=slots, max_draft=max_draft, async_send=async_send, diag=diag)
+                           slots=slots, max_draft=max_draft, async_send=async_send, diag=diag,
+                           max_frame_mib=max_frame_mib)
 
     @classmethod
     def from_parts(cls, *, model, cache, rank: int, total: int, tokenizer=None,
@@ -603,7 +604,7 @@ class SliceWorker:
                    outbound: Optional[BigBrainLink] = None,
                    token_link: Optional[BigBrainLink] = None, slots: int = 1,
                    max_draft: int = 0, async_send: Optional[bool] = None,
-                   diag: bool = False) -> "SliceWorker":
+                   diag: bool = False, max_frame_mib: float = 0.0) -> "SliceWorker":
         """An already-loaded slice (tests, or an embedding process): the model
         must already be filtered/rebased with prepare_layer_map() run and the
         cache attached."""
@@ -616,12 +617,13 @@ class SliceWorker:
                         prefill_chunk=prefill_chunk,
                         advance_fn=advance_fn if advance_fn is not None else _load_advance_fn(),
                         inbound=inbound, outbound=outbound, token_link=token_link,
-                        slots=slots, max_draft=max_draft, async_send=async_send, diag=diag)
+                        slots=slots, max_draft=max_draft, async_send=async_send, diag=diag,
+                        max_frame_mib=max_frame_mib)
         return w
 
     def _init_runtime(self, *, model, cache, tokenizer, config, device, max_num_tokens,
                       prefill_chunk, advance_fn, inbound, outbound, token_link,
-                      slots=1, max_draft=0, async_send=None, diag=False):
+                      slots=1, max_draft=0, async_send=None, diag=False, max_frame_mib=0.0):
         self.model, self.cache, self.tokenizer, self.config = model, cache, tokenizer, config
         self.device = device
         self.max_num_tokens = int(max_num_tokens)
@@ -656,6 +658,12 @@ class SliceWorker:
         self.max_draft = max(0, int(max_draft))
         self.batched = self.n_slots > 1 or self.max_draft > 0
         self.diag = bool(diag)
+        # The largest frame this node accepts on the links it READS (security review M3): from the model (hidden size, slots,
+        # draft, prefill chunk), or --max-frame-mib.
+        self.max_frame_bytes = self._frame_limit(config, max_frame_mib)
+        for link in (inbound, token_link):
+            if link is not None:
+                link.max_frame_bytes = self.max_frame_bytes
         self.stats = NodeStats(self.rank)
         if async_send is None:
             async_send = self.batched
@@ -668,6 +676,21 @@ class SliceWorker:
         self._pending_step: Optional[StepMeta] = None
         self._skip_step: Optional[int] = None
         self.tx_lock = threading.Lock()   # a step's control+activation frames are sent as a pair
+
+    def _frame_limit(self, config, max_frame_mib: float = 0.0) -> int:
+        """--max-frame-mib when given; else pipe.frame_limit() for the model: one activation of the widest step this pipeline
+        sends (a prefill chunk, or every slot's draft) in fp32, or one logits row, with slack. A config without hidden_size keeps
+        the pipe's flat default."""
+        if max_frame_mib and float(max_frame_mib) > 0:
+            return int(float(max_frame_mib) * 1024 * 1024)
+        hidden = getattr(config, "hidden_size", None)
+        if not isinstance(hidden, int) or isinstance(hidden, bool) or hidden <= 0:
+            return DEFAULT_MAX_FRAME_BYTES
+        tokens = max(self.prefill_chunk, self.n_slots * (self.max_draft + 1))
+        streams = getattr(config, "hc_mult", None)
+        streams = streams if isinstance(streams, int) and not isinstance(streams, bool) and streams > 0 else 1
+        vocab = self.vocab_size if isinstance(self.vocab_size, int) and not isinstance(self.vocab_size, bool) else 0
+        return frame_limit(hidden, tokens, streams=streams, vocab_size=vocab)
 
     @staticmethod
     def _connect_retry(host: str, port: int, watchdog_s: float, attempts: int = 600,
@@ -1248,6 +1271,14 @@ class SliceWorker:
             except (BigBrainPeerDead, BigBrainProtocolError) as exc:
                 self._inq.put(Message("dead", reason=str(exc)))
                 return
+            except Exception as exc:  # noqa: BLE001 - this thread must never die silently (security review M3)
+                log.exception("rank %d: the inbound reader crashed", self.rank)
+                try:
+                    self.inbound.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._inq.put(Message("dead", reason=f"the inbound reader crashed: {type(exc).__name__}: {exc}"))
+                return
             self._inq.put(msg)
             if msg.kind == "bye":
                 return
@@ -1513,6 +1544,9 @@ def add_node_args(a: argparse.ArgumentParser) -> argparse.ArgumentParser:
                         "links before it declares that peer dead. Keep 5 on a quiet LAN; raise it (30) when a hop goes "
                         "through an ssh tunnel or a node can stall in one long compute step "
                         "(a dense model with a slow prefill needs it)")
+    a.add_argument("--max-frame-mib", type=float, default=0.0,
+                   help="the largest frame (MiB) this node accepts from a peer; a larger one closes the link. 0 = derived "
+                        "from the model (hidden size x the widest step x fp32, with slack; at least 64 MiB)")
     a.add_argument("--idle-dead", type=float, default=30.0,
                    help="nodes 1..T-1: declare the upstream peer gone after this "
                         "many seconds with no liveness (frames/heartbeats)")
@@ -1606,14 +1640,15 @@ def worker_from_args(args) -> SliceWorker:
                        connect_settle_s=args.connect_settle, slots=effective_slots(args),
                        max_draft=effective_max_draft(args), async_send=args.async_send,
                        diag=getattr(args, 'diag', False),
-                       watchdog_s=effective_watchdog(args))
+                       watchdog_s=effective_watchdog(args),
+                       max_frame_mib=float(getattr(args, "max_frame_mib", 0.0) or 0.0))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if any(a == "--http-port" or a.startswith("--http-port=") for a in raw):
         # SERVING mode: the controller launches node 0 as `-m bigbrain.worker ... --http-port N
-        # --api-token T`. Node 0 is the OpenAI server (server.py); the worker's own parser has no
+        # --api-key-file api_key`. Node 0 is the OpenAI server (server.py); the worker's own parser has no
         # HTTP flags, so hand the whole command line over.
         from .server import main as server_main
         return server_main(raw)

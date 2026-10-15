@@ -87,6 +87,14 @@ Raw TCP, little-endian. Standard library plus numpy only. The header is 55 bytes
 type, seq id, batch, seq len, hidden dim, dtype, flags, payload length, and then `request_id` and `position` (v1 had no tail: 39 bytes, and v1
 frames are still parsed). Any other version fails with "unsupported version N" and kills the link, because the stream is then desynchronised.
 
+Since v0.2.1 every header is checked **before its payload is read**: the payload length against the link's limit (derived from the model:
+hidden size x the widest step x 4 bytes x 8, at least 64 MiB; `--max-frame-mib` overrides; a CONTROL frame at most 16 MiB, a RESET or
+HEARTBEAT at most 64 KiB) and, for an ACTIVATION or LOGITS frame, against the shape and dtype it announces (computed on Python integers,
+so a huge shape cannot wrap to zero). A malformed frame of any kind (bad header, oversized, a shape that does not match, chunks that do not
+fit together, JSON that does not parse) closes the link and raises `BigBrainProtocolError`; the receive loops on every node treat that,
+and any other exception, as a dead link, so node 0's engine marks the pipeline dead at once instead of waiting for a token that cannot come.
+The links are not authenticated: see SECURITY.md.
+
 Message types: ACTIVATION (fp16 or fp32 `(batch, seq, hidden)`, or `(batch, seq, streams, hidden)` for hyper-connection models; a large
 activation is split into frames along the sequence axis and the last carries `FLAG_LAST_CHUNK`; `FLAG_PREFILL` marks a prompt chunk),
 HEARTBEAT, RESET, READY, BYE, CONTROL (a JSON object), TOKEN (uint32 ids) and LOGITS (debug).

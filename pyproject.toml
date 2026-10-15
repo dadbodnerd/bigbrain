@@ -32,9 +32,12 @@ classifiers = [
 ]
 # Only what the package imports without a GPU: numpy (the wire protocol and the engine) and jinja2 (the chat template of the
 # endpoint). torch and exllamav3 are imported lazily, inside the node code, so they are the optional `gpu` extra below.
+# jinja2 >= 3.1.6: the chat template comes from the model folder (third-party content) and is rendered in jinja2's sandbox; older
+# releases have published sandbox escapes (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516). Node 0 also checks it at start, because
+# the nodes run the staged files with whatever jinja2 their environment has (server.jinja2_version_problem).
 dependencies = [
-    "numpy",
-    "jinja2",
+    "numpy>=1.24",
+    "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]

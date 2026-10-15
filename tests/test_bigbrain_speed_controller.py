@@ -30,7 +30,7 @@ def _node(rank, host, gpu, start, end, in_port):
 def _serve_plan(**kw):
     nodes = [_node(0, "h0", 0, 0, 18, 0), _node(1, "h1", 0, 18, 36, 6001)]
     base = dict(model_dir="/m", nodes=nodes, total_blocks=36, token_port=7000, http_port=16980,
-                api_token="T0K", python_bin="python")
+                api_token="T0K-0123456789abcdef", python_bin="python")
     base.update(kw)
     return ClusterPlan(**base)
 
@@ -89,7 +89,9 @@ def test_serving_commands_parse_node_zero_as_the_server_and_the_rest_as_workers(
     plan = _serve_plan(slots=4, spec="ngram", spec_k=4)
     c0, c1 = plan.build_commands()
     a0 = srv.build_arg_parser().parse_args(_argv(c0, "bigbrain.worker"))
-    assert a0.http_port == 16980 and a0.api_token == "T0K" and a0.rank == 0
+    # v0.2.1: the key travels as a 0600 file in the stage dir, never on the command line (security review M5)
+    assert a0.http_port == 16980 and a0.api_key_file == "api_key" and a0.api_token is None and a0.rank == 0
+    assert "T0K" not in c0
     a1 = wk.build_arg_parser().parse_args(_argv(c1, "bigbrain.worker"))
     assert a1.rank == 1 and wk.effective_slots(a1) == 4 and wk.effective_max_draft(a1) == 4
     # the worker's own parser has no HTTP flags: that was the bug -- worker.main now hands them to the server
@@ -139,9 +141,9 @@ def test_validate_checks_the_speed_settings():
 def test_cli_serve_and_speed_flags_reach_the_plan():
     plan = plan_from_args(["--model-dir", "/m", "--total-blocks", "36", "--token-port", "7000",
                            "--node", "h0:0:0:18:0", "--node", "h1:0:18:36:6001",
-                           "--serve-port", "16980", "--api-token", "T", "--slots", "4",
+                           "--serve-port", "16980", "--api-token", "T0K-0123456789abcdef", "--slots", "4",
                            "--spec-draft", "ngram", "--spec-k", "6"])
-    assert (plan.http_port, plan.api_token, plan.slots, plan.spec, plan.spec_k) == (16980, "T", 4, "ngram", 6)
+    assert (plan.http_port, plan.api_token, plan.slots, plan.spec, plan.spec_k) == (16980, "T0K-0123456789abcdef", 4, "ngram", 6)
     assert plan.validate() == []
     c0 = plan.build_commands()[0]
     assert "--http-port 16980" in c0 and "--slots 4" in c0 and "--spec-draft ngram" in c0
@@ -209,14 +211,14 @@ def test_the_planner_refuses_slots_that_do_not_fit_and_says_why():
     cache1 = sum(sh.cache_mib(i, 32768) for i in range(36))
     cache8 = sum(sh.cache_mib(i, 32768, slots=8) for i in range(36))
     assert cache8 > 7 * cache1 and f"{cache8:,.0f} cache" in many.reason
-    ok4 = ctl.plan_capacity(sh, _gpus(3, 23000), 16384, slots=4, http_port=16980, api_token="T", **kw)
+    ok4 = ctl.plan_capacity(sh, _gpus(3, 23000), 16384, slots=4, http_port=16980, api_token="T0K-0123456789abcdef", **kw)
     assert ok4.ok and ok4.cluster.slots == 4
     assert "--slots 4" in ok4.cluster.build_commands()[1]
 
 
 def test_the_draft_model_reserves_room_on_node_zero():
     sh = ctl.model_shape("g", GPTOSS)
-    kw = dict(headroom_mib=0, node_overhead_mib=0, http_port=16980, api_token="T")
+    kw = dict(headroom_mib=0, node_overhead_mib=0, http_port=16980, api_token="T0K-0123456789abcdef")
     without = ctl.plan_capacity(sh, _gpus(3, 30000), 8192, slots=2, spec="ngram", **kw)
     with_draft = ctl.plan_capacity(sh, _gpus(3, 30000), 8192, slots=2, spec="model", spec_k=4,
                                    spec_model="/m20", draft_mib=11000, **kw)
@@ -241,7 +243,7 @@ def test_a_draft_device_must_be_a_card_of_the_plan_and_carries_the_draft():
     """The draft's card is a card the reservation holds, parks and unloads: it has to be one of the plan's
     own cards on node 0's machine, and THAT node (not node 0) pays for the draft."""
     sh = ctl.model_shape("g", GPTOSS)
-    kw = dict(headroom_mib=0, node_overhead_mib=0, http_port=16980, api_token="T", slots=2,
+    kw = dict(headroom_mib=0, node_overhead_mib=0, http_port=16980, api_token="T0K-0123456789abcdef", slots=2,
               spec="model", spec_model="/m20", draft_mib=11000)
     on0 = ctl.plan_capacity(sh, _two_on_one_host(), 8192, **kw)
     on1 = ctl.plan_capacity(sh, _two_on_one_host(), 8192, draft_device="cuda:1", **kw)

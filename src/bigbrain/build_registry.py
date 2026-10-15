@@ -212,6 +212,10 @@ def nodes_from_config(cfg: dict) -> List[dict]:
         root = e.get("model_dir")
         if not host or host in _LOOPBACK or str(e.get("url", "")).startswith("https"):
             continue
+        if not site.valid_host(host):
+            # a servers file is often someone else's: a "host" such as $(id) never reaches ssh (security review M1)
+            print(f"  skipping server url {e.get('url')!r}: {host!r} is not an IP address or a host name", file=sys.stderr)
+            continue
         if not isinstance(root, str) or not root.startswith("/") or host in seen:
             continue
         seen[host] = True
@@ -344,7 +348,10 @@ REMOTE_SCRIPT = (inspect.getsource(_tensor_slot) + "\n\n" + inspect.getsource(_l
 def measure(host: str, model_root: str, user: Optional[str] = None, timeout: int = 300) -> dict:
     """One ssh round trip: the node's raw GPU/topology/model facts."""
     user = user or site.ssh_user()
-    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{user}@{host}",
+    site.check_user(user)
+    site.check_host(host)
+    # `--` ends ssh's options: the destination is never read as one (security review M1)
+    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", f"{user}@{host}",
             f"python3 - {_shq(model_root)}"]
     p = subprocess.run(argv, input=REMOTE_SCRIPT, capture_output=True, text=True, timeout=timeout)
     if p.returncode != 0:

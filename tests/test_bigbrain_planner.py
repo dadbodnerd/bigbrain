@@ -188,18 +188,20 @@ def test_the_capacity_plan_builds_a_valid_cluster_plan():
     p = ctl.plan_capacity(s, [gpu("10.0.0.1", 0, 2000, model_dir="/a/M"),
                               gpu("10.0.0.2", 1, 1000, model_dir="/b/M")],
                           ctx=8192, stage_root="/tmp/bigbrain/bb-1", http_port=16980,
-                          api_token="T0K", **KW)
+                          api_token="T0K-0123456789abcdef", **KW)
     c = p.cluster
     assert c is not None and c.validate() == []
     assert c.max_num_tokens == 8192 and c.stage_root == "/tmp/bigbrain/bb-1"
     assert [(n.host, n.gpu, n.slice_start, n.slice_end, n.model_dir, n.python_bin) for n in c.nodes] == [
         ("10.0.0.1", 0, 0, 20, "/a/M", "/py"), ("10.0.0.2", 1, 20, 30, "/b/M", "/py")]
     c0, c1 = c.build_commands()
-    assert "--http-port 16980" in c0 and "--api-token T0K" in c0
-    assert "--http-port" not in c1 and "--api-token" not in c1
+    # v0.2.1: node 0 reads the key from <stage>/api_key; the key is on no command line (security review M5)
+    assert "--http-port 16980" in c0 and "--api-key-file api_key" in c0 and "T0K" not in c0
+    assert "--http-port" not in c1 and "--api-key-file" not in c1 and "T0K" not in c1
     # serving: no one-shot prompt; device order pinned to nvidia-smi's
     assert "--prompt" not in c0
-    assert "CUDA_DEVICE_ORDER=PCI_BUS_ID" in c0 and c0.startswith("cd /tmp/bigbrain/bb-1 && ")
+    # v0.2.1: umask 077 and the private-stage-dir guard come first, then the cd (security review M4)
+    assert "CUDA_DEVICE_ORDER=PCI_BUS_ID" in c0 and c0.startswith("umask 077 && bb_stage=/tmp/bigbrain/bb-1 && ") and '&& cd "$bb_stage" && ' in c0
 
 
 def test_links_say_same_host_or_lan_with_an_estimate():

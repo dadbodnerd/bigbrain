@@ -242,6 +242,14 @@ class PipelineEngine:
             except (BigBrainPeerDead, BigBrainProtocolError) as exc:
                 self._die(f"the token link died: {exc}")
                 return
+            except Exception as exc:  # noqa: BLE001 - never die silently: /health must say so (security review M3)
+                log.exception("the token-link reader crashed")
+                self._die(f"the token-link reader crashed: {type(exc).__name__}: {exc}")
+                try:
+                    link.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
             if msg.kind == "heartbeat":
                 continue
             if msg.kind == "bye":

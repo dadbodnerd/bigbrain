@@ -87,7 +87,9 @@ class TestValidate:
         assert any("http_port" in p for p in plan.validate())
         plan.http_port, plan.api_token = 16980, ""
         assert any("api_token" in p for p in plan.validate())
-        plan.api_token = "t"
+        plan.api_token = "t"                                   # v0.2.1: too short (S3)
+        assert any("16" in p for p in plan.validate())
+        plan.api_token = "t" * 16
         assert plan.validate() == []
 
     def test_teardown_command_targets_only_this_stage_dir(self):
@@ -306,7 +308,9 @@ class TestStagingAndFlags:
     def test_command_cd_prefix_points_at_stage_root(self):
         plan = _plan([_node(0, "h0", 0, 0, 20, 0)], 20)
         c0 = plan.build_commands()[0]
-        assert c0.startswith("cd /tmp/bigbrain && ")
+        # v0.2.1: the default is private (~/.cache/bigbrain/stage, expanded by the node's shell) and is checked before the cd
+        assert c0.startswith("umask 077 && ")
+        assert 'bb_stage="$HOME"/.cache/bigbrain/stage && ' in c0 and '&& cd "$bb_stage" && ' in c0
         assert "-m bigbrain.worker" in c0
 
     def test_stage_package_stages_all_files(self, tmp_path, monkeypatch):

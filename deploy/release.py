@@ -3,9 +3,9 @@
 # Copyright (c) 2026 dadbodnerd
 """deploy/release.py -- put one commit of this repo on a host as an immutable release dir.
 
-    python deploy/release.py --commit v0.2.0 --host alpha --host beta      # names from site.toml [hosts], or user@address
-    python deploy/release.py --commit v0.2.0 --to-dir /tmp/releases           # a local directory instead of ssh (tests, dry runs)
-    python deploy/release.py --commit v0.2.0 --host alpha --dry-run          # say what would happen; touch nothing
+    python deploy/release.py --commit v0.2.1 --host alpha --host beta      # names from site.toml [hosts], or user@address
+    python deploy/release.py --commit v0.2.1 --to-dir /tmp/releases           # a local directory instead of ssh (tests, dry runs)
+    python deploy/release.py --commit v0.2.1 --host alpha --dry-run          # say what would happen; touch nothing
 
 What a release is: `git archive <commit>` extracted into <dest>/<first 12 hex of the commit>/ on the host, with a file
 BUILD holding the FULL commit hash, then made read-only (`chmod -R a-w`), then a symlink <dest>/current pointing at it.
@@ -78,7 +78,7 @@ def remote_script(dest: str, full: str) -> str:
 
 def install_remote(host: str, dest: str, full: str, archive: bytes) -> str:
     target = site.ssh_target(host)
-    p = subprocess.run([*SSH, target, remote_script(dest, full)], input=archive, capture_output=True)
+    p = subprocess.run([*SSH, "--", target, remote_script(dest, full)], input=archive, capture_output=True)
     out = p.stdout.decode(errors="replace").strip()
     if p.returncode != 0 or out.split()[-1:] not in (["INSTALLED"], ["EXISTS"]):
         raise RuntimeError(f"{target}: exit {p.returncode}: {(p.stderr.decode(errors='replace') or out).strip()[:300]}")
@@ -99,8 +99,8 @@ def install_local(dest_root: str, full: str, archive: bytes) -> str:
     with tarfile.open(fileobj=io.BytesIO(archive)) as tf:
         try:
             tf.extractall(partial, filter="data")
-        except TypeError:                              # python < 3.11.4 has no extraction filters; the archive is our own
-            tf.extractall(partial)
+        except TypeError:                              # python < 3.11.4 has no extraction filters: check every member ourselves
+            extract_checked(tf, partial)
     (partial / "BUILD").write_text(full + "\n", encoding="ascii", newline="\n")
     for p in sorted(partial.rglob("*"), key=lambda q: len(q.parts), reverse=True) + [partial]:
         mode = p.stat().st_mode
@@ -114,6 +114,23 @@ def install_local(dest_root: str, full: str, archive: bytes) -> str:
     except OSError:                                   # Windows without the symlink privilege
         (root / "current.txt").write_text(short_of(full) + "\n", encoding="ascii")
     return "INSTALLED"
+
+
+def extract_checked(tf: tarfile.TarFile, dest) -> None:
+    """Extract `tf` into `dest` taking only plain files and directories whose paths stay inside `dest`; anything else (an absolute
+    path, a `..`, a link, a device) raises ValueError before a byte is written. What filter="data" does on Python >= 3.11.4, for
+    the Pythons that lack it (security review S10)."""
+    root = Path(dest).resolve()
+    members = []
+    for m in tf.getmembers():
+        name = m.name.replace("\\", "/")
+        target = (root / name).resolve()
+        if name.startswith("/") or os.path.isabs(m.name) or ".." in name.split("/") or not (target == root or root in target.parents):
+            raise ValueError(f"refusing archive member {m.name!r}: it would land outside {dest}")
+        if not (m.isfile() or m.isdir()):
+            raise ValueError(f"refusing archive member {m.name!r}: only plain files and directories are extracted")
+        members.append(m)
+    tf.extractall(root, members=members)
 
 
 def _make_writable(path: Path) -> None:
@@ -131,7 +148,7 @@ def _rmtree(path: Path) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--commit", required=True, help="a commit, tag or branch of this repo (v0.2.0)")
+    ap.add_argument("--commit", required=True, help="a commit, tag or branch of this repo (v0.2.1)")
     ap.add_argument("--host", action="append", default=[],
                     help="a host: a name from site.toml [hosts], or user@address; repeatable")
     ap.add_argument("--to-dir", default=None, help="install into this local directory instead of over ssh")

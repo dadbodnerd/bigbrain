@@ -87,7 +87,7 @@ class Runner:
         return not self.ssh
 
     def shell(self, command: str, stdin: bytes | None = None, timeout: int = 90):
-        p = subprocess.run([*SSH, self.ssh, command], input=stdin, capture_output=True, timeout=timeout)
+        p = subprocess.run([*SSH, "--", self.ssh, command], input=stdin, capture_output=True, timeout=timeout)
         return p.returncode, p.stdout.decode("utf-8", "replace"), p.stderr.decode("utf-8", "replace")
 
     def reachable(self) -> bool:

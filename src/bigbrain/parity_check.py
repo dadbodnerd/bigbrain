@@ -5,7 +5,7 @@ monolithic model computes? Greedy, N tokens: token-for-token match plus the max
 absolute logit difference, for dense AND hybrid (recurrent) models.
 
 Subcommands (run with the venv python that has exllamav3 from the directory that holds
-bigbrain/, e.g. the controller's stage root /tmp/bigbrain):
+bigbrain/, e.g. the controller's stage root ~/.cache/bigbrain/stage):
 
   reference  Load the WHOLE model on one GPU and generate N greedy tokens with
              exllamav3's own API -- Model.prefill() over prompt[:-1] (chunked

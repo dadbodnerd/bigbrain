@@ -196,10 +196,10 @@ def test_generation_defaults(tmp_path):
 
 def test_resolve_api_key(tmp_path, monkeypatch):
     f = tmp_path / "key"
-    f.write_text("  from-file \n")
-    monkeypatch.setenv("BB_KEY", "from-env")
-    assert resolve_api_key(str(f), "BB_KEY", insecure=False) == "from-file"
-    assert resolve_api_key(None, "BB_KEY", insecure=False) == "from-env"
+    f.write_text("  from-file-0123456789 \n")              # keys of at least 16 characters since v0.2.1
+    monkeypatch.setenv("BB_KEY", "from-env-0123456789")
+    assert resolve_api_key(str(f), "BB_KEY", insecure=False) == "from-file-0123456789"
+    assert resolve_api_key(None, "BB_KEY", insecure=False) == "from-env-0123456789"
     monkeypatch.delenv("BB_KEY")
     with pytest.raises(SystemExit):
         resolve_api_key(None, "BB_KEY", insecure=False)

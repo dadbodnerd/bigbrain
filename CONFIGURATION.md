@@ -12,9 +12,14 @@ you pass everything else on the command line.
 
 ## 1. `site.toml`
 
-Found in this order: `$BIGBRAIN_SITE` (a missing file there is an error, not a silent fallback), then `./site.toml` in the current
-directory, otherwise there is no site file. **Every key is optional and an unknown table or key is an error**, so a typo cannot be silently
-ignored. A relative path inside the file is relative to the file. `site.example.toml` is the annotated template (fake values).
+Found in this order: `$BIGBRAIN_SITE` (a missing file there is an error, not a silent fallback), then `~/.config/bigbrain/site.toml`
+(`$XDG_CONFIG_HOME/bigbrain/site.toml` when that variable is set), otherwise there is no site file. **A `site.toml` in the current directory
+is not read on its own** (since v0.2.1): it is named on stderr and ignored; point `$BIGBRAIN_SITE` at it to use it. **Every key is optional
+and an unknown table or key is an error**, so a typo cannot be silently ignored. Host addresses must be an IP address or a host name
+(letters, digits, `.`, `-`, `_`) and user names a POSIX-style name: anything else is refused, so a value from a file someone handed you
+can never reach a shell or become an ssh option. A relative path inside the file is relative to the file. `site.example.toml` is the
+annotated template (fake values). There is no interpreter setting here: the node's Python comes from the registry (`python`) or the
+controller's `--node-python` / `--python-bin`.
 
 ```toml
 [ssh]
@@ -65,8 +70,8 @@ measuring your PCs; `bigbrain-merge-models` (`merge_models`) adds models from an
 |---|---|
 | `host` | the ssh and TCP address of the PC |
 | `aliases` | other names `--hosts` / `--gpus` accept for it |
-| `user` | ssh user. Falls back to `[ssh] user` in `site.toml`, then the local user |
-| `python` | **set this by hand**: the interpreter that has exllamav3 and torch (for example `/opt/venvs/alpha/bin/python`) |
+| `user` | ssh user for every node on this PC (every split mode since v0.2.1). Falls back to `[ssh] user` in `site.toml`, then the local user |
+| `python` | **set this by hand**: the interpreter that has exllamav3 and torch (for example `/opt/venvs/alpha/bin/python`, or a TabbyAPI install's `venv/bin/python`), used by every node on this PC. `--node-python` overrides it per rank |
 | `model_root` | the folder that holds the model folders on this PC (what `build_registry` scanned) |
 | `launch` | `false` marks a PC the controller must not start workers on (for example Windows); `launch_blocker` says why |
 | `link_mb_s`, `loopback_mb_s` | the LAN speed to this PC and the same-PC hop speed in MB/s; the plan reports them as the estimated speed of each hop (it does not change the split). Defaults 110 (about 1 GbE) and 2000 |
@@ -79,7 +84,8 @@ example a TabbyAPI instance) that live on that card. The engine only carries the
 custom `[capacity] reader` can use them.
 
 The controller starts every worker with `CUDA_DEVICE_ORDER=PCI_BUS_ID`, so `cuda:N` is `nvidia-smi` index N even in a box that mixes
-GPU generations. Index the cards the way `nvidia-smi` does.
+GPU generations. Index the cards the way `nvidia-smi` does. There is no UUID key: an index follows the PCI slot order and can change when a
+card is added or moved, so re-run `build_registry` after a hardware change (INSTALL.md, "Which GPU each rank uses").
 
 ### A model
 
@@ -101,11 +107,12 @@ rather than a guess.
 
 | variable | used by | meaning |
 |---|---|---|
-| `BIGBRAIN_SITE` | everything controller-side | path of the site file (else `./site.toml`) |
+| `BIGBRAIN_SITE` | everything controller-side | path of the site file (else `~/.config/bigbrain/site.toml`; `./site.toml` is not read on its own) |
+| `XDG_CONFIG_HOME` | everything controller-side | where `bigbrain/site.toml` is looked for (default `~/.config`) |
 | `BIGBRAIN_REGISTRY` | controller, `build_registry`, `merge_models` | path of the registry; beats `site.toml` |
 | `BIGBRAIN_PATCH_HOSTS` | `patches/verify.py` | path of the hosts file; beats `site.toml`'s `[patches] hosts`; `--hosts FILE` beats both |
 | `BIGBRAIN_SERVERS_CONFIG` | `build_registry` | default for `--config` |
-| `BIGBRAIN_API_KEY` | node 0 (`server`), `bench`, `parity_check` | the bearer key, when no `--api-key-file` / `--api-token` is given |
+| `BIGBRAIN_API_KEY` | the controller, node 0 (`server`), `bench`, `parity_check` | the bearer key, when no `--api-key-file` / `--api-token` is given (at least 16 characters) |
 | `BIGBRAIN_BIND` | every node | default for `--bind-host` (the address the pipe listeners bind; default `0.0.0.0`) |
 | `EXL3_DFLASH_LONGCTX_TOKENS`, `EXL3_DFLASH_LONGCTX_WINDOW` | exllamav3 *after* `patches/exllamav3/dflash2_tp.py` | context length above which DFlash2 verifies fewer drafted tokens (defaults 100000, 4; 0 = off) |
 
@@ -124,7 +131,9 @@ the model) or `--gpus HOST:GPU` repeated in pipeline order, or `--node HOST:GPU:
 | `--max-num-tokens` | 8192 | context **per slot**, a multiple of 256 |
 | `--ctx` | `--max-num-tokens` | `--split capacity` only: the context the plan is sized for, and the nodes get it as their `--max-num-tokens` |
 | `--slots` | 1 | sequences in flight at once; every node gets the same value |
-| `--serve-port`, `--api-token` | | serve an OpenAI endpoint on node 0 behind this key (required for `--slots > 1` or speculation) |
+| `--serve-port` | | serve an OpenAI endpoint on node 0 (required for `--slots > 1` or speculation); needs a key |
+| `--api-key-file PATH` | `$BIGBRAIN_API_KEY` | the bearer key (at least 16 characters). The controller sends it over ssh stdin to `<stage-root>/api_key` (mode 0600) on node 0, which reads it from there: it is never on a command line and never printed |
+| `--api-token KEY` | | **deprecated**: the key itself, which puts it on the controller's command line (visible in `ps`). Still staged as a file, never passed to node 0's command line |
 | `--spec-draft none\|ngram\|model` (`--spec`) | `none` | speculative decoding for greedy requests |
 | `--spec-k` | 4 | most draft tokens per round (1 to 15) |
 | `--spec-model`, `--draft-device`, `--draft-mib` | | the draft model folder on node 0's PC, the CUDA device it loads on, and its VRAM (the planner reserves it) |
@@ -133,8 +142,9 @@ the model) or `--gpus HOST:GPU` repeated in pipeline order, or `--node HOST:GPU:
 | `--headroom-mib` | 1024 | free memory the planner keeps per GPU (prefill scratch, allocator slack) |
 | `--node-overhead-mib` | 1024 | CUDA context, torch and exllamav3 runtime per worker process |
 | `--cache-bytes` | 2.0 | KV bytes per element (2 = the FP16 cache the nodes use) |
-| `--stage-root` | `/tmp/bigbrain` | the directory on each PC the engine is staged into and the nodes run from. Absolute path |
-| `--python-bin` | `python` | the interpreter on the nodes when the registry gives none; `--node-python` / `--node-model` override per node |
+| `--stage-root` | `~/.cache/bigbrain/stage` | the directory on each PC the engine is staged into and the nodes run from: an absolute path, or `~/...` (expanded on the PC). Created with mode 0700; a directory that is a symlink, belongs to someone else, or is writable by group or others is refused |
+| `--python-bin` | `python` | the interpreter on the nodes when the registry gives none |
+| `--node-python BIN`, `--node-model DIR` | | per-rank interpreter / model folder, repeated **in rank order** (rank 0 first); they override the registry for as many ranks as you give |
 | `--mem-fraction` | | cap each worker's CUDA memory fraction (shared GPUs) |
 | `--total-blocks` | from `config.json` | the model's layer count, to avoid reading it over ssh |
 | `--execute` | off | stage and launch over ssh |
@@ -157,6 +167,7 @@ You normally never type these: the controller builds them. They matter when you 
 | `--prefill-chunk` | 2048 | prompt tokens per prefill hop (bounds activation memory and lets the next node start early) |
 | `--watchdog-s` | 5.0 | seconds without any frame (heartbeats come every 0.5 s) before a link is declared dead; minimum 2.0. **Raise to 30** for a hop through an ssh tunnel, or when a node can compute for a long time without sending (a dense model's slow prefill) |
 | `--idle-dead` | 30 | nodes >= 1: declare the upstream peer gone after this many seconds without liveness |
+| `--max-frame-mib` | 0 (derived) | the largest frame this node accepts from a peer; a larger or malformed one closes the link and marks the pipeline dead. 0 = from the model: hidden size x the widest step (a prefill chunk, or every slot's draft) x 4 bytes x 8, at least 64 MiB |
 | `--bind-host` | `$BIGBRAIN_BIND` or `0.0.0.0` | the address the listeners bind (use `127.0.0.1` when the peer arrives through an ssh tunnel) |
 | `--connect-settle` | 1.5 | seconds to watch a fresh connect for an ssh tunnel's accept-then-close (0 = off) |
 | `--mem-fraction` | | cap this process's CUDA memory fraction |
@@ -169,8 +180,10 @@ Server-only flags (node 0):
 |---|---|---|
 | `--host`, `--http-port` | `0.0.0.0`, 16890 | where the HTTP endpoint listens. (The examples in these docs use 16980.) |
 | `--model-name` | the model folder's name | the id `/v1/models` reports |
-| `--api-key-file`, `--api-token`, `--api-key-env` | env `BIGBRAIN_API_KEY` | the bearer key. The file is read; `--api-token` is the literal (visible in `ps`; it is what the controller passes); the env var is the fallback. With none, the server refuses to start |
-| `--insecure-no-auth` | off | serve without a key (loopback tests only) |
+| `--api-key-file`, `--api-token`, `--api-key-env` | env `BIGBRAIN_API_KEY` | the bearer key, at least 16 characters. The file is read (the controller stages it as `api_key` in the stage dir and passes `--api-key-file api_key`; node 0 warns when the file is readable by group or others); `--api-token` is the literal (visible in `ps`, logged as a warning); the env var is the fallback. With none, the server refuses to start |
+| `--insecure-no-auth` | off | serve without a key; only with a loopback `--host` (127.0.0.1, ::1, localhost), for tests |
+| `--max-connections` | 64 | HTTP connections held at once (from any client, before auth); more get a 503 at once |
+| `--conn-timeout` | 60 | seconds a connection may stay silent (not sending, or not reading) before it is dropped |
 | `--queue-size`, `--retry-after` | 8, 5 | requests that may wait behind the running ones before the answer is 503; the `Retry-After` seconds |
 | `--default-max-tokens` | 0 | `max_tokens` when a request gives none (0 = up to the end of the context) |
 | `--prefill-window` | 2 | prompt chunks in flight |

@@ -20,3 +20,5 @@ def _hermetic_site(monkeypatch):
     for var in ("BIGBRAIN_SITE", "BIGBRAIN_REGISTRY", "BIGBRAIN_PATCH_HOSTS", "BIGBRAIN_SERVERS_CONFIG"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(site, "SITE_FILE", "site.toml.not-read-by-the-tests")      # ./site.toml is not looked at either
+    # nor is the developer's own ~/.config/bigbrain/site.toml
+    monkeypatch.setattr(site, "user_site_file", lambda: Path(__file__).resolve().parent / "no-user-site" / "site.toml")

@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 dadbodnerd
-# One BigBrain node, as a systemd USER unit. The instance is the stage dir, path-escaped:
+# One BigBrain node, as a systemd USER unit (Linux). The instance is the stage dir, path-escaped:
 #
-#   systemctl --user start "bigbrain-node@$(systemd-escape --path /tmp/bigbrain).service"
+#   systemctl --user start "bigbrain-node@$(systemd-escape --path ~/.cache/bigbrain/stage).service"
 #   systemctl --user stop  "bigbrain-node@...service"                    # TERM, then KILL after TimeoutStopSec; frees the VRAM
 #   journalctl --user -u "bigbrain-node@...service" -f
 #
-# The stage dir must hold node.args (and node.env with BB_PYTHON): see deploy/run_node.sh.
+# The stage dir must hold node.args (and node.env with BB_PYTHON): see deploy/run_node.sh. It must be private (owned by you, not
+# group- or world-writable: chmod 700), or run_node.sh refuses to start.
 #
 # DELIBERATELY not enabled anywhere: there is no [Install] section and Restart=no. A BigBrain node holds GPU memory; a node
 # that restarted on its own after a crash or a reboot would take that memory back without anyone knowing. A rebooted PC
@@ -15,6 +16,10 @@
 # Install: deploy/release.py puts the code in ~/bigbrain/releases/<commit>/ and points ~/bigbrain/releases/current at it (the
 # paths below); copy this file to ~/.config/systemd/user/, systemctl --user daemon-reload. Running it after the user logs out needs
 # `loginctl enable-linger <user>` (a one-time root action) -- not done by this repo.
+#
+# Stronger sandboxing (a private /tmp, a read-only system and home) is in bigbrain-node@.service.d/sandbox.conf beside this file. It
+# is a separate drop-in because a USER unit can only use it where unprivileged user namespaces work; read that file before you copy
+# it to ~/.config/systemd/user/bigbrain-node@.service.d/.
 [Unit]
 Description=BigBrain node (stage dir %I)
 Documentation=file:%h/bigbrain/releases/current/OPERATIONS.md
@@ -31,3 +36,9 @@ TimeoutStopSec=20
 # the node logs to the journal, not to node_<n>.log
 StandardOutput=journal
 StandardError=journal
+# Hardening that works in every user manager (v0.2.1): no privilege gain through setuid binaries or file capabilities, files the
+# node creates are private to you, no setuid/setgid files can be made, and the execution domain is fixed.
+NoNewPrivileges=yes
+UMask=0077
+RestrictSUIDSGID=yes
+LockPersonality=yes

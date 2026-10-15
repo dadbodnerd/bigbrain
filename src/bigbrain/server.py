@@ -77,6 +77,7 @@ import argparse
 import base64
 import collections
 import datetime
+import ipaddress
 import itertools
 import json
 import logging
@@ -107,8 +108,11 @@ from .worker import (SamplingSettings, add_node_args, effective_max_draft, effec
 log = logging.getLogger("bigbrain.server")
 
 DEFAULT_HTTP_PORT = 16890
+DEFAULT_MAX_CONNECTIONS = 64       # HTTP connections held at once; more get a 503 (--max-connections)
+DEFAULT_CONN_TIMEOUT_S = 60.0      # a connection silent this long is dropped (--conn-timeout)
 MAX_BODY_BYTES = 8 * 1024 * 1024
 MAX_STOP_STRINGS = 16
+MAX_STOP_LENGTH = 256              # characters per stop string: matching held text is quadratic in it (security review S5)
 MAX_LOGIT_TOKENS = 512
 _CLIENT_GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
@@ -183,14 +187,57 @@ class StopMatcher:
 # chat template
 # --------------------------------------------------------------------------
 
+#: The oldest jinja2 whose sandbox has no published escape (CVE-2024-56201 and CVE-2024-56326 were fixed in 3.1.5, CVE-2025-27516 in
+#: 3.1.6). The chat template is third-party content (it comes with the model), so the sandbox is the only barrier (security review M6).
+MIN_JINJA2 = (3, 1, 6)
+
+
+def _jinja2_version() -> Optional[str]:
+    """The installed jinja2's version string, or None when jinja2 is not installed."""
+    try:
+        import jinja2
+    except ImportError:
+        return None
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        return version("jinja2")
+    except (ImportError, PackageNotFoundError):
+        return str(getattr(jinja2, "__version__", "unknown"))
+
+
+def _release_tuple(v: str) -> Optional[Tuple[int, int, int]]:
+    m = re.match(r"\s*(\d+)\.(\d+)(?:\.(\d+))?", v or "")
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)) if m else None
+
+
+def jinja2_version_problem() -> Optional[str]:
+    """None when jinja2 is absent (the ChatML fallback renders, no template code runs) or new enough; else what is wrong and the
+    command that fixes it. Node 0 refuses to start on this (the nodes never go through pip, so pyproject's floor does not reach
+    them), and no template is rendered."""
+    v = _jinja2_version()
+    if v is None:
+        return None
+    t = _release_tuple(v)
+    if t is not None and t >= MIN_JINJA2:
+        return None
+    need = ".".join(map(str, MIN_JINJA2))
+    return (f"jinja2 {v} is too old to render a model's chat template safely: BigBrain needs jinja2 >= {need} (older releases "
+            f"have published sandbox escapes: CVE-2024-56201, CVE-2024-56326, CVE-2025-27516). Upgrade it in this node's "
+            f"environment: {sys.executable} -m pip install -U \"jinja2>={need}\"")
+
+
 def _jinja_env():
     """A transformers-compatible sandboxed jinja2 environment, or None when
-    jinja2 is not installed (then the ChatML fallback is used)."""
+    jinja2 is not installed (then the ChatML fallback is used). Raises
+    RuntimeError for a jinja2 older than MIN_JINJA2."""
     try:
         import jinja2
         from jinja2.sandbox import ImmutableSandboxedEnvironment
     except ImportError:
         return None
+    problem = jinja2_version_problem()
+    if problem:
+        raise RuntimeError(problem)
 
     def raise_exception(message):
         raise jinja2.exceptions.TemplateError(message)
@@ -318,19 +365,47 @@ def load_generation_defaults(model_dir: str) -> Dict:
             if isinstance(g.get(k), (int, float)) and not isinstance(g.get(k), bool)}
 
 
+#: Below this length a key is refused (security review S3). Make one with `python -c "import secrets; print(secrets.token_hex(24))"`.
+MIN_API_KEY_LENGTH = 16
+
+
+def is_loopback(host: str) -> bool:
+    """True for a bind address that only this machine can reach: 127.0.0.0/8, ::1 or localhost."""
+    if str(host).strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(str(host).strip()).is_loopback
+    except ValueError:
+        return False
+
+
+def _checked_key(key: str, where: str) -> str:
+    if len(key) < MIN_API_KEY_LENGTH:
+        raise SystemExit(f"the API key from {where} is {len(key)} characters; at least {MIN_API_KEY_LENGTH} are required. Make "
+                         f"one with: python -c \"import secrets; print(secrets.token_hex(24))\"")
+    return key
+
+
 def resolve_api_key(key_file: Optional[str], env_name: Optional[str], insecure: bool,
                     token: Optional[str] = None) -> Optional[str]:
     if token:
-        return token.strip()
+        log.warning("--api-token puts the key on this process's command line, where any local user can read it (ps); prefer "
+                    "--api-key-file (a 0600 file) or $%s", env_name or "BIGBRAIN_API_KEY")
+        return _checked_key(token.strip(), "--api-token")
     if key_file:
         with open(key_file, encoding="utf-8") as f:
             key = f.read().strip()
         if not key:
             raise SystemExit(f"API key file {key_file} is empty")
-        return key
+        if os.name == "posix":
+            mode = os.stat(key_file).st_mode
+            if mode & 0o077:
+                log.warning("the API key file %s is readable or writable by group or others (mode %o): chmod 600 %s",
+                            key_file, mode & 0o777, key_file)
+        return _checked_key(key, f"the file {key_file}")
     key = os.environ.get(env_name, "").strip() if env_name else ""
     if key:
-        return key
+        return _checked_key(key, f"${env_name}")
     if insecure:
         return None
     raise SystemExit(f"no API key: pass --api-key-file PATH or set ${env_name} "
@@ -386,6 +461,17 @@ class WorkerEngine:
             return {"mode": "batched", **self.batch.report(reset=reset)}
         return {"mode": "single-sequence", "engine": None,
                 "nodes": [self.w.node_stats(reset=reset)]}
+
+    def dead_reason(self) -> Optional[str]:
+        """Why the pipeline cannot serve, or None: the batched engine's reason, or a dead link of node 0 (a malformed frame
+        closes one). A request then gets a 503 at once instead of waiting --token-timeout for a token that cannot come."""
+        if self.batch is not None:
+            return self.batch.dead
+        for name in ("outbound", "token_link"):
+            link = getattr(self.w, name, None)
+            if link is not None and link.is_dead:
+                return f"the {name.replace('_', ' ')} is down"
+        return None
 
     def health(self) -> Dict:
         if self.batch is not None:
@@ -857,6 +943,9 @@ class BigBrainApp:
             self._error(h, e)
         except _CLIENT_GONE:
             pass
+        except TimeoutError:      # the client went silent mid-request (--conn-timeout): drop it, nothing to answer
+            log.info("dropping %s %s: the client sent nothing for %.0f s", method, path,
+                     getattr(h.server, "conn_timeout_s", DEFAULT_CONN_TIMEOUT_S))
         except Exception as exc:  # noqa: BLE001
             log.exception("unhandled error on %s %s", method, path)
             try:
@@ -903,7 +992,10 @@ class BigBrainApp:
             return {}
 
     def _health(self, h) -> None:
-        eng = self.engine.health()
+        eng = dict(self.engine.health())
+        if eng.get("dead") and not self._authorized(h):
+            # the reason can carry remote exception text, peer addresses and paths: only a key holder gets it (security review S4)
+            eng["dead"] = "the pipeline is down (send the API key to /health for the reason)"
         ok = bool(eng.get("ok")) and self.scheduler.alive()
         self._send_json(h, 200 if ok else 503, {
             "status": "ok" if ok else "degraded", "model": self.engine.model_name,
@@ -962,6 +1054,8 @@ class BigBrainApp:
         s = [x for x in s if x]
         if len(s) > MAX_STOP_STRINGS:
             raise _HTTPError(400, f"at most {MAX_STOP_STRINGS} stop strings")
+        if any(len(x) > MAX_STOP_LENGTH for x in s):
+            raise _HTTPError(400, f"a stop string may be at most {MAX_STOP_LENGTH} characters")
         return s
 
     def _budget(self, prompt_ids: List[int], requested: Optional[int]) -> int:
@@ -992,6 +1086,10 @@ class BigBrainApp:
                 return_logits=False, body: Optional[Dict] = None, diag: bool = False,
                 route: str = "", job: Optional[Dict] = None) -> GenRequest:
         spec, spec_k = self._spec(body or {})
+        dead = getattr(self.engine, "dead_reason", None)
+        reason = dead() if callable(dead) else None
+        if reason:
+            raise _HTTPError(503, f"the pipeline is down: {reason}", "server_error")
         batch = getattr(self.engine, "batch", None)
         if batch is not None:
             if return_logits:
@@ -1202,6 +1300,12 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "BigBrain/2"
     protocol_version = "HTTP/1.0"
 
+    def setup(self):
+        # StreamRequestHandler applies `timeout` to the connection: a client that sends nothing (or stops reading) for this long
+        # is dropped instead of holding a thread forever (security review M2). SSE keep-alives every 5 s stay well inside it.
+        self.timeout = getattr(self.server, "conn_timeout_s", DEFAULT_CONN_TIMEOUT_S)
+        super().setup()
+
     def do_GET(self):  # noqa: N802
         self.server.app.route(self, "GET")
 
@@ -1212,16 +1316,83 @@ class _Handler(BaseHTTPRequestHandler):
         log.info("%s %s", self.address_string(), fmt % args)
 
 
-def make_http_server(app: BigBrainApp, host: str, port: int) -> ThreadingHTTPServer:
-    httpd = ThreadingHTTPServer((host, port), _Handler)
-    httpd.daemon_threads = True
+_REFUSED_503 = (b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\n"
+                b"Connection: close\r\nContent-Length: 87\r\n\r\n"
+                b'{"error": {"message": "too many open connections", "type": "server_busy", "code": 503}}')
+
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a cap on the connections it holds at once. Auth is checked only once a request's headers are in,
+    so without a cap any client that can reach the port could open idle sockets until the process runs out of threads (security
+    review M2). A connection beyond the cap gets a canned 503 and is closed at once, before any handler thread exists for it."""
+
+    daemon_threads = True
+
+    def __init__(self, addr, handler, max_connections: int = 0, conn_timeout_s: float = 0.0):
+        self.max_connections = int(max_connections or DEFAULT_MAX_CONNECTIONS)
+        self.conn_timeout_s = float(conn_timeout_s or DEFAULT_CONN_TIMEOUT_S)
+        if self.max_connections < 1 or self.conn_timeout_s <= 0:
+            raise ValueError("max_connections must be >= 1 and conn_timeout_s > 0")
+        self._slots = threading.BoundedSemaphore(self.max_connections)
+        self._active = 0
+        self._active_lock = threading.Lock()
+        super().__init__(addr, handler)
+
+    @property
+    def active_connections(self) -> int:
+        return self._active
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self._refuse(request)
+            return
+        with self._active_lock:
+            self._active += 1
+        try:
+            super().process_request(request, client_address)          # starts the handler thread
+        except BaseException:
+            self._release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release()
+
+    def _release(self) -> None:
+        with self._active_lock:
+            self._active -= 1
+        self._slots.release()
+
+    def _refuse(self, request) -> None:
+        self._refused = getattr(self, "_refused", 0) + 1
+        now = time.monotonic()
+        if now - getattr(self, "_refused_logged", -1e9) >= 10.0:    # at most one line per 10 s, however hard someone floods it
+            log.warning("refusing connections: %d already open (--max-connections); %d refused so far",
+                        self.max_connections, self._refused)
+            self._refused_logged = now
+        try:
+            request.settimeout(1.0)
+            request.sendall(_REFUSED_503)
+        except OSError:
+            pass
+        self.shutdown_request(request)
+
+
+def make_http_server(app: BigBrainApp, host: str, port: int, max_connections: int = 0,
+                     conn_timeout_s: float = 0.0) -> BoundedHTTPServer:
+    """The HTTP server for `app`: at most `max_connections` open at once (default DEFAULT_MAX_CONNECTIONS), each dropped after
+    `conn_timeout_s` of silence (default DEFAULT_CONN_TIMEOUT_S)."""
+    httpd = BoundedHTTPServer((host, port), _Handler, max_connections=max_connections, conn_timeout_s=conn_timeout_s)
     httpd.app = app
     return httpd
 
 
-def serve_in_thread(app: BigBrainApp, host: str = "127.0.0.1", port: int = 0):
+def serve_in_thread(app: BigBrainApp, host: str = "127.0.0.1", port: int = 0, max_connections: int = 0,
+                    conn_timeout_s: float = 0.0):
     """(httpd, bound_port, thread) -- tests and embedding."""
-    httpd = make_http_server(app, host, port)
+    httpd = make_http_server(app, host, port, max_connections=max_connections, conn_timeout_s=conn_timeout_s)
     th = threading.Thread(target=httpd.serve_forever, daemon=True)
     th.start()
     return httpd, httpd.server_address[1], th
@@ -1274,12 +1445,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="the id /v1/models reports (default: the model folder's name)")
     a.add_argument("--api-key-file", default=None, help="file holding the bearer token")
     a.add_argument("--api-token", default=None,
-                   help="the bearer token itself (what the cluster controller passes; visible in ps -- "
-                        "prefer --api-key-file when you launch by hand)")
+                   help="DEPRECATED: the bearer token itself, which is visible to any local user in ps. Use "
+                        "--api-key-file (what the controller passes since v0.2.1) or the env var")
     a.add_argument("--api-key-env", default="BIGBRAIN_API_KEY",
                    help="env var holding the bearer token (when no --api-key-file)")
     a.add_argument("--insecure-no-auth", action="store_true",
-                   help="serve without auth (loopback tests only)")
+                   help="serve without auth: tests only, and refused unless --host is a loopback address")
+    a.add_argument("--max-connections", type=int, default=DEFAULT_MAX_CONNECTIONS,
+                   help="HTTP connections held open at once (any client, before auth); more get a 503 at once")
+    a.add_argument("--conn-timeout", type=float, default=DEFAULT_CONN_TIMEOUT_S,
+                   help="seconds a connection may stay silent (not sending, or not reading) before it is dropped")
     a.add_argument("--queue-size", type=int, default=8,
                    help="requests that may WAIT behind the running one; more -> 503")
     a.add_argument("--retry-after", type=int, default=5, help="Retry-After seconds on a 503")
@@ -1309,6 +1484,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                         format="%(asctime)s bigbrain.server[%(process)d] %(levelname)s %(message)s")
     if args.rank != 0:
         raise SystemExit("server.py runs on node 0 (--rank 0); other nodes run bigbrain.worker")
+    problem = jinja2_version_problem()      # before the (slow) model load: the staged nodes never went through pip
+    if problem:
+        raise SystemExit(problem)
+    if args.insecure_no_auth and not is_loopback(args.host):
+        # no key on a LAN-facing port is open to every host there, and to a web page any of them visits (security review S2)
+        raise SystemExit(f"--insecure-no-auth is for loopback tests only: it needs --host 127.0.0.1 (or ::1, localhost), "
+                         f"not {args.host}")
     api_key = resolve_api_key(args.api_key_file, args.api_key_env, args.insecure_no_auth,
                               token=args.api_token)
     if api_key is None:
@@ -1328,7 +1510,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         app = BigBrainApp(engine, api_key=api_key, queue_size=args.queue_size,
                           retry_after=args.retry_after, default_max_tokens=args.default_max_tokens,
                           generation_defaults=load_generation_defaults(args.model_dir))
-        httpd = make_http_server(app, args.host, args.http_port)
+        httpd = make_http_server(app, args.host, args.http_port, max_connections=args.max_connections,
+                                 conn_timeout_s=args.conn_timeout)
         signal.signal(signal.SIGTERM, lambda *_: threading.Thread(
             target=httpd.shutdown, daemon=True).start())
         log.info("serving %s on http://%s:%d/v1 (%d node(s), context %d, template %s, "

@@ -20,6 +20,7 @@ import argparse
 import itertools
 import json
 import math
+import os
 import re
 import shlex
 import subprocess
@@ -31,6 +32,35 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 from . import registry as bbreg
 from . import site
 from .paged import PagedSlots
+
+#: Where the engine is staged on each PC, and where the nodes run from (v0.2.1, security review M4). A private per-user directory:
+#: `python -m` puts the working directory FIRST on sys.path, so whoever can write here can run code as the node. `~/` is expanded
+#: by the node's shell. (Not $XDG_RUNTIME_DIR: logind deletes it when the user's last session ends, i.e. mid-run.)
+DEFAULT_STAGE_ROOT = "~/.cache/bigbrain/stage"
+
+
+def rpath(p: str) -> str:
+    """A path for the REMOTE shell, quoted; a leading ~/ becomes "$HOME"/ so it still expands there."""
+    if p == "~":
+        return '"$HOME"'
+    if p.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(p[2:])
+    return shlex.quote(p)
+
+
+#: the remote shell variable that holds the stage dir in every command the controller sends
+STAGE_VAR = "bb_stage"
+
+
+def stage_dir_guard(d: str) -> str:
+    """Shell: set $bb_stage to `d`, then carry on only when it is a directory owned by this user, not a symlink and not writable
+    by group or others; else print why on stderr and exit 1. Run before anything is staged into `d` or run from it (security
+    review M4). POSIX `find -prune -perm` is the portable way to read the mode bits."""
+    v = f'"${STAGE_VAR}"'
+    return (f'{STAGE_VAR}={rpath(d)} && {{ [ -d {v} ] && [ ! -L {v} ] && [ -O {v} ] && '
+            f'[ -z "$(find {v} -prune \\( -perm -020 -o -perm -002 \\) -print)" ]; }} '
+            f'|| {{ echo "bigbrain: refusing the stage dir ${STAGE_VAR}: it must be a directory of the ssh user, not a symlink, '
+            f'not writable by group or others (chmod 700)" >&2; exit 1; }}')
 
 
 @dataclass
@@ -50,6 +80,12 @@ class NodeSpec:
     model_dir: str = ""
     python_bin: str = ""
 
+    def __post_init__(self):
+        # The host goes into the remote shell command of a neighbouring node and into an ssh argv; the user into an ssh argv.
+        # Both may come from a registry or a site file someone handed you, so they are checked here (security review M1).
+        site.check_host(self.host, f"node {self.rank} host")
+        site.check_user(self.user, f"node {self.rank} ssh user")
+
 
 @dataclass
 class ClusterPlan:
@@ -61,14 +97,15 @@ class ClusterPlan:
     max_num_tokens: int = 8192
     token_port: int = 0
     total_blocks: int = 0
-    stage_root: str = "/tmp/bigbrain"  # remote dir the worker package is staged into
+    stage_root: str = DEFAULT_STAGE_ROOT  # remote dir the worker package is staged into (private: see DEFAULT_STAGE_ROOT)
     python_bin: str = "python"  # the venv python (exllamav3 + torch) on the nodes
     mem_fraction: Optional[float] = None  # shared-GPU cap, passed to each worker
     execute: bool = False  # actually launch over ssh (else dry-run)
     # SERVE mode (a long-running session instead of a one-shot run): node 0 serves
     # an OpenAI-compatible endpoint on http_port behind a bearer token instead
-    # of running one --prompt. ASSUMED engine flags: worker.py accepts
-    # --http-port and --api-token on node 0 (bigbrain/server.py).
+    # of running one --prompt. Node 0 gets --http-port and --api-key-file api_key
+    # (worker.main hands them to bigbrain/server.py); api_token is the key itself,
+    # which the controller stages as that file and never puts on a command line.
     http_port: int = 0
     api_token: str = ""
     # SPEED (several sequences in flight + speculative decoding; engine.py / spec.py).
@@ -100,6 +137,13 @@ class ClusterPlan:
             if node.rank != i:
                 problems.append(f"rank {node.rank} at position {i}: ranks must be 0..{n - 1} in order")
                 break
+
+        # Host and user values (checked at construction too; this catches a value changed afterwards).
+        for i, node in enumerate(self.nodes):
+            if not site.valid_host(node.host):
+                problems.append(f"rank {i}: host {node.host!r} is not an IP address or a host name")
+            if not site.valid_user(node.user):
+                problems.append(f"rank {i}: ssh user {node.user!r} is not a user name")
 
         # Slice coverage: contiguous, no gaps or overlaps, starting at 0.
         prev_end = 0
@@ -139,6 +183,8 @@ class ClusterPlan:
                 problems.append("token_port must be set for a multi-node plan")
             elif (self.nodes[0].host, self.token_port) in seen:
                 problems.append(f"token_port {self.token_port} collides with an in_port on node 0's host ({self.nodes[0].host})")
+        if not (self.stage_root.startswith("/") or self.stage_root.startswith("~/")) or "\n" in self.stage_root:
+            problems.append(f"stage_root {self.stage_root!r} must be an absolute path or start with ~/ (a private directory)")
         if self.slots < 1:
             problems.append(f"slots must be >= 1, got {self.slots}")
         if self.spec not in ("none", "ngram", "model"):
@@ -159,6 +205,9 @@ class ClusterPlan:
                                 f"({self.nodes[0].host})")
             if not self.api_token:
                 problems.append("a serving plan (http_port set) needs an api_token")
+            elif len(self.api_token) < MIN_API_KEY_LENGTH:
+                problems.append(f"the API key is {len(self.api_token)} characters; at least {MIN_API_KEY_LENGTH} are required "
+                                f"(python -c \"import secrets; print(secrets.token_hex(24))\")")
         return problems
 
     def build_commands(self, python_bin: Optional[str] = None,
@@ -172,54 +221,57 @@ class ClusterPlan:
         for i, node in enumerate(self.nodes):
             node_pybin = node.python_bin or pybin
             node_model = node.model_dir or self.model_dir
+            # Every value below is either an int/float formatted here or shell-quoted: the remote shell interprets this string.
             parts = [
                 f"--model-dir {shlex.quote(node_model)}",
-                f"--device cuda:{node.gpu}",
-                f"--slice {node.slice_start} {node.slice_end}",
-                f"--rank {node.rank}",
+                f"--device cuda:{int(node.gpu)}",
+                f"--slice {int(node.slice_start)} {int(node.slice_end)}",
+                f"--rank {int(node.rank)}",
                 f"--total {n}",
             ]
             if not self.http_port:
                 # one-shot generation (the CLI); a serving session takes its
                 # prompts over HTTP instead
-                parts += [f"--prompt {shlex.quote(self.prompt)}", f"--max-new {self.max_new}"]
-            parts.append(f"--max-num-tokens {self.max_num_tokens}")
+                parts += [f"--prompt {shlex.quote(self.prompt)}", f"--max-new {int(self.max_new)}"]
+            parts.append(f"--max-num-tokens {int(self.max_num_tokens)}")
             if self.mem_fraction is not None:
-                parts.append(f"--mem-fraction {self.mem_fraction}")
+                parts.append(f"--mem-fraction {float(self.mem_fraction):g}")
             if self.watchdog_s:
-                parts.append(f"--watchdog-s {self.watchdog_s:g}")
+                parts.append(f"--watchdog-s {float(self.watchdog_s):g}")
             if i > 0:
-                parts.append(f"--in-port {node.in_port}")
+                parts.append(f"--in-port {int(node.in_port)}")
             if i < n - 1:
                 nxt = self.nodes[i + 1]
-                parts += [f"--next-host {nxt.host}", f"--next-port {nxt.in_port}"]
+                parts += [f"--next-host {shlex.quote(nxt.host)}", f"--next-port {int(nxt.in_port)}"]
                 if i == 0:
                     # node 0 binds the token port (pre-load) for the last node
                     # to connect back to.
-                    parts.append(f"--token-port {self.token_port}")
+                    parts.append(f"--token-port {int(self.token_port)}")
             elif n > 1:
-                parts += [f"--token-host {self.nodes[0].host}",
-                          f"--token-port {self.token_port}"]
+                parts += [f"--token-host {shlex.quote(self.nodes[0].host)}",
+                          f"--token-port {int(self.token_port)}"]
             if i == 0 and self.http_port:
-                parts += [f"--http-port {self.http_port}",
-                          f"--api-token {shlex.quote(self.api_token)}"]
+                # The key itself never goes on a command line (ps, /proc/PID/cmdline, the printed plan): the controller stages it
+                # as <stage>/api_key, 0600, and node 0 reads it from its working directory (security review M5).
+                parts += [f"--http-port {int(self.http_port)}",
+                          f"--api-key-file {API_KEY_FILE}"]
             if self.batched:
                 # EVERY node: the same slot count (the cache layout) and speculation headroom
-                parts.append(f"--slots {self.slots}")
+                parts.append(f"--slots {int(self.slots)}")
                 md = self.max_draft or (self.spec_k if self.spec != "none" else 0)
                 if md:
-                    parts.append(f"--max-draft {md}")
+                    parts.append(f"--max-draft {int(md)}")
                 if i == 0:
                     if self.spec != "none":
-                        parts += [f"--spec-draft {self.spec}", f"--spec-k {self.spec_k}"]
+                        parts += [f"--spec-draft {shlex.quote(self.spec)}", f"--spec-k {int(self.spec_k)}"]
                     if self.spec == "model":
                         parts.append(f"--spec-model {shlex.quote(self.spec_model)}")
                         if self.draft_device:
                             parts.append(f"--draft-device {shlex.quote(self.draft_device)}")
                     if self.inflight:
-                        parts.append(f"--inflight {self.inflight}")
+                        parts.append(f"--inflight {int(self.inflight)}")
                     if self.mb_size:
-                        parts.append(f"--mb-size {self.mb_size}")
+                        parts.append(f"--mb-size {int(self.mb_size)}")
             # cd first: -m bigbrain.worker resolves against the cwd, which
             # is where stage_package() puts the package. Operator-supplied paths
             # are shell-quoted (the remote shell interprets this string).
@@ -227,10 +279,11 @@ class ClusterPlan:
             # so on a mixed box (e.g. a 5070 + 3090 + 3060) cuda:N need not be
             # nvidia-smi's index N -- and the planner sized each slice from
             # nvidia-smi's reading of index N. Bus order makes the two agree.
-            cmd = (f"cd {shlex.quote(self.stage_root)} && {DEVICE_ORDER_ENV} "
+            # umask 077 and the guard first: the node runs (and logs) only from a private stage dir (security review M4).
+            cmd = (f'umask 077 && {stage_dir_guard(self.stage_root)} && cd "${STAGE_VAR}" && {DEVICE_ORDER_ENV} '
                    f"{shlex.quote(node_pybin)} -m bigbrain.worker {' '.join(parts)}")
             if redirect_logs:
-                cmd += f" > {shlex.quote(self.stage_root + '/node_' + str(i) + '.log')} 2>&1"
+                cmd += f' > "${STAGE_VAR}"/node_{i}.log 2>&1'
             cmds.append(cmd)
         return cmds
 
@@ -254,6 +307,21 @@ PACKAGE_FILES = (
 #: Prefixed to every worker command (see build_commands).
 DEVICE_ORDER_ENV = "CUDA_DEVICE_ORDER=PCI_BUS_ID"
 
+#: The file node 0 reads its bearer key from, relative to the stage dir (its working directory). The controller stages it, 0600.
+API_KEY_FILE = "api_key"
+
+#: Below this length a key is refused (security review S3): `python -c "import secrets; print(secrets.token_hex(24))"`.
+MIN_API_KEY_LENGTH = 16
+
+#: The env var the controller (and node 0) read the key from when no file is given.
+API_KEY_ENV = "BIGBRAIN_API_KEY"
+
+
+def redact(text: str, secret: str) -> str:
+    """`text` with every occurrence of `secret` replaced by ***: for anything the controller prints. (A secret of a few characters,
+    which validate() refuses anyway, is left alone rather than starring out every such letter in the output.)"""
+    return text.replace(secret, "***") if secret and len(secret) >= 6 else text
+
 
 #: `pgrep -f` (ERE) pattern for a BigBrain node's command line, in BOTH launch forms: `python -m bigbrain.worker ...` (the
 #: controller, deploy/run_node.sh) and `python -c "... from bigbrain import worker ..."` (a wrapper script that imports the
@@ -274,18 +342,35 @@ def teardown_command(stage_root: str, sig: str = "TERM") -> str:
     Always exits 0."""
     if sig not in ("TERM", "KILL", "INT"):
         raise ValueError(f"signal {sig!r} is not one teardown sends")
-    d = shlex.quote(stage_root.rstrip("/"))
-    return (f'd={d}; for p in $(pgrep -f "{NODE_PROCESS_PATTERN}" 2>/dev/null); do '
+    d = rpath(stage_root.rstrip("/"))
+    # the physical path (what /proc/PID/cwd reads) even when $HOME or the stage root goes through a symlink
+    return (f'd=$(cd {d} 2>/dev/null && pwd -P) || d={d}; for p in $(pgrep -f "{NODE_PROCESS_PATTERN}" 2>/dev/null); do '
             f'[ "$(readlink /proc/$p/cwd 2>/dev/null)" = "$d" ] && kill -{sig} "$p" 2>/dev/null; '
             f'done; true')
 
 
+def ssh_argv(user: str, host: str, cmd: str, *options: str) -> List[str]:
+    """`ssh -o BatchMode=yes [options] -- user@host cmd`, after checking the user and the host (ValueError otherwise). The `--` ends
+    ssh's own options, so nothing in the destination is ever read as one (security review M1)."""
+    site.check_user(user)
+    site.check_host(host)
+    return ["ssh", "-o", "BatchMode=yes", *options, "--", f"{user}@{host}", cmd]
+
+
+def _stage_root_of(remote_path: str) -> str:
+    """The stage root a staged file belongs to: <root>/bigbrain/x.py -> <root>; <root>/api_key -> <root>."""
+    parent = remote_path.rsplit("/", 1)[0]
+    return parent.rsplit("/", 1)[0] if parent.endswith("/bigbrain") else parent
+
+
 def _default_stager(host: str, user: str, remote_path: str, content: str) -> None:
-    """Ship one file to a node over ssh (stdin pipe -- no scp dependency)."""
+    """Ship one file to a node over ssh (stdin pipe -- no scp dependency). The stage root is created private (umask 077) and
+    checked (stage_dir_guard) before anything is written into it; the file is created afresh, so it is 0600 whatever was there."""
     d = remote_path.rsplit("/", 1)[0]
+    root = _stage_root_of(remote_path)
     subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", f"{user}@{host}",
-         f"mkdir -p {shlex.quote(d)} && cat > {shlex.quote(remote_path)}"],
+        ssh_argv(user, host, f"umask 077 && mkdir -p {rpath(root)} && {stage_dir_guard(root)} && mkdir -p {rpath(d)} && "
+                             f"rm -f {rpath(remote_path)} && cat > {rpath(remote_path)}"),
         input=content.encode("utf-8"), check=True)
 
 
@@ -308,7 +393,7 @@ def stage_package(host: str, user: str, pkg_dir: str, remote_root: str,
 def _ssh_start(host: str, user: str, cmd: str) -> subprocess.Popen:
     """Start one node over ssh, detached from the controller's lifetime."""
     return subprocess.Popen(
-        ["ssh", "-o", "BatchMode=yes", f"{user}@{host}", cmd],
+        ssh_argv(user, host, cmd),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
@@ -334,26 +419,37 @@ class Controller:
         self.pkg_dir = str(pkg_dir or Path(__file__).resolve().parent)
         self.handles: Dict[int, object] = {}
 
+    def _redact(self, text: str) -> str:
+        return redact(text, self.plan.api_token)
+
     def _print_runner(self, host: str, user: str, cmd: str) -> object:
-        print(f"[dry-run] ssh {user}@{host} {cmd}")
+        print(self._redact(f"[dry-run] ssh {user}@{host} {cmd}"))
         return None
 
     def _ssh_runner(self, host: str, user: str, cmd: str) -> subprocess.Popen:
         return _ssh_start(host, user, cmd)
 
     def launch(self) -> Dict[int, object]:
-        """Stage the worker package on every node, then start every node in
+        """Stage the worker package on every node (and, serving, the key file on node 0), then start every node in
         REVERSE rank order (listeners up before connectors).
         Returns {rank: handle}."""
         if self.stage:
             targets = list(dict.fromkeys((n.host, n.user) for n in self.plan.nodes))
             for host, user in targets:
                 if self.dry_run:
-                    print(f"[dry-run] stage {len(PACKAGE_FILES)} files -> "
-                          f"{user}@{host}:{self.plan.stage_root}")
+                    print(self._redact(f"[dry-run] stage {len(PACKAGE_FILES)} files -> "
+                                       f"{user}@{host}:{self.plan.stage_root}"))
                 else:
                     stage_package(host, user, self.pkg_dir,
                                   self.plan.stage_root, stager=self.stager)
+            if self.plan.http_port and self.plan.api_token:
+                n0 = self.plan.nodes[0]
+                remote = f"{self.plan.stage_root.rstrip('/')}/{API_KEY_FILE}"
+                if self.dry_run:
+                    print(f"[dry-run] stage {API_KEY_FILE} (the key, mode 0600) -> {n0.user}@{n0.host}:{remote}")
+                else:
+                    # over ssh stdin, never argv; created afresh under umask 077 (the default stager)
+                    (self.stager or _default_stager)(n0.host, n0.user, remote, self.plan.api_token + "\n")
         cmds = self.plan.build_commands(redirect_logs=not self.dry_run)
         for node in sorted(self.plan.nodes, key=lambda x: x.rank, reverse=True):
             self.handles[node.rank] = self.runner(node.host, node.user, cmds[node.rank])
@@ -401,8 +497,7 @@ def _read_model_config(model_dir: str, host: str, ssh_user: Optional[str] = None
         return json.loads(local.read_text())
     ssh_user = ssh_user or site.ssh_user()
     out = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{ssh_user}@{host}",
-         f"cat {shlex.quote(model_dir.rstrip('/') + '/config.json')}"],
+        ssh_argv(ssh_user, host, f"cat {shlex.quote(model_dir.rstrip('/') + '/config.json')}", "-o", "ConnectTimeout=10"),
         capture_output=True, text=True, check=True, timeout=60).stdout
     return json.loads(out)
 
@@ -415,7 +510,7 @@ def _read_total_blocks(model_dir: str, host: str,
 
 def plan_auto(model_dir: str, gpus: List[Tuple[str, int]], prompt: str = "Hello",
               max_new: int = 32, max_num_tokens: int = 8192, total_blocks: int = 0,
-              port_base: int = 16900, stage_root: str = "/tmp/bigbrain",
+              port_base: int = 16900, stage_root: str = DEFAULT_STAGE_ROOT,
               python_bin: str = "python", mem_fraction: Optional[float] = None,
               execute: bool = False, ssh_user: Optional[str] = None,
               annotate: Optional[Callable[[List[NodeSpec]], None]] = None
@@ -727,7 +822,7 @@ def _bottleneck_cuts(prefix: List[float], budgets: List[float]) -> Tuple[float, 
 def plan_capacity(shape: ModelShape, gpus: Sequence[GpuCapacity], ctx: int, *,
                   headroom_mib: int = DEFAULT_HEADROOM_MIB,
                   node_overhead_mib: int = DEFAULT_NODE_OVERHEAD_MIB,
-                  port_base: int = 16900, stage_root: str = "/tmp/bigbrain",
+                  port_base: int = 16900, stage_root: str = DEFAULT_STAGE_ROOT,
                   http_port: int = 0, api_token: str = "",
                   link_mb_s: Union[int, Dict[str, int], None] = None,
                   loopback_mb_s: Union[int, Dict[str, int], None] = None,
@@ -953,7 +1048,7 @@ FREE_MEM_QUERY = "nvidia-smi --query-gpu=index,memory.free --format=csv,noheader
 
 
 def _ssh_capture(user: str, host: str, cmd: str, timeout: int = 30) -> str:
-    return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{user}@{host}", cmd],
+    return subprocess.run(ssh_argv(user, host, cmd, "-o", "ConnectTimeout=10"),
                           capture_output=True, text=True, check=True, timeout=timeout).stdout
 
 
@@ -1013,8 +1108,13 @@ def _add_speed_args(p: argparse.ArgumentParser) -> None:
     """Serving mode + the speed features (read by apply_speed_args on the finished plan)."""
     p.add_argument("--serve-port", type=int, default=0,
                    help="SERVING mode: node 0 runs the OpenAI-compatible server on this port "
-                        "(needs --api-token) instead of generating one --prompt")
-    p.add_argument("--api-token", default="", help="the bearer token node 0's server requires")
+                        "(needs a key: --api-key-file or $BIGBRAIN_API_KEY) instead of generating one --prompt")
+    p.add_argument("--api-key-file", default=None, metavar="PATH",
+                   help="a file holding the bearer key node 0's server requires (keep it mode 0600). The controller stages it "
+                        "to node 0 as <stage-root>/api_key (0600); it is never put on a command line. Default: "
+                        "$BIGBRAIN_API_KEY")
+    p.add_argument("--api-token", default="",
+                   help="DEPRECATED: the key itself, which puts it on this command line (visible in ps). Use --api-key-file")
     p.add_argument("--slots", type=int, default=1,
                    help="sequences in flight at once (every node gets the same; serving mode)")
     p.add_argument("--spec-draft", "--spec", dest="spec_draft", choices=("none", "ngram", "model"),
@@ -1030,6 +1130,26 @@ def _add_speed_args(p: argparse.ArgumentParser) -> None:
                    help="seconds of silence on a link before a node declares its peer dead, passed to EVERY node "
                         "(0 = the nodes' default, 5; at least 2). Raise it (30) for a dense model with a slow prefill "
                         "or a hop through an ssh tunnel")
+
+
+def _controller_key(p: argparse.ArgumentParser, a) -> str:
+    """The bearer key for a serving plan: --api-key-file, else the deprecated --api-token, else $BIGBRAIN_API_KEY; '' when there
+    is none (validate() then says a serving plan needs one). Read here, on the controller; staged to node 0 as a 0600 file."""
+    if a.api_key_file:
+        try:
+            with open(a.api_key_file, encoding="utf-8") as f:
+                key = f.read().strip()
+        except OSError as e:
+            p.error(f"cannot read --api-key-file {a.api_key_file}: {e.strerror or e}")
+        if not key:
+            p.error(f"--api-key-file {a.api_key_file} is empty")
+        return key
+    if a.api_token:
+        print("warning: --api-token is deprecated: it puts the key on the controller's command line, where any local user can "
+              "read it with ps. Use --api-key-file PATH (or $BIGBRAIN_API_KEY). The key is still staged to node 0 as a 0600 "
+              "file, never passed on node 0's command line.", file=sys.stderr)
+        return a.api_token.strip()
+    return os.environ.get(API_KEY_ENV, "").strip()
 
 
 def apply_speed_args(plan: ClusterPlan, a) -> ClusterPlan:
@@ -1067,7 +1187,9 @@ def _plan_from_args(argv: Optional[List[str]] = None):
     p.add_argument("--max-num-tokens", type=int, default=8192)
     p.add_argument("--token-port", type=int, default=0,
                    help="explicit --node mode only; auto mode assigns it")
-    p.add_argument("--stage-root", default="/tmp/bigbrain")
+    p.add_argument("--stage-root", default=DEFAULT_STAGE_ROOT,
+                   help="the directory on each PC the engine is staged into and the nodes run from: an absolute path or ~/..., "
+                        "private to the ssh user (a directory others can write is refused). Default %(default)s")
     p.add_argument("--python-bin", default="python",
                    help="the venv python (exllamav3 + torch) on the nodes")
     p.add_argument("--mem-fraction", type=float, default=None,
@@ -1104,6 +1226,7 @@ def _plan_from_args(argv: Optional[List[str]] = None):
                    help="KV bytes per element (2 = the worker's FP16 cache)")
     _add_speed_args(p)
     a = p.parse_args(argv)
+    a.api_token = _controller_key(p, a)
     # Explicit --node mode may supply per-node --node-model overrides instead of
     # a plan-level model (then the plan's model_dir is display-only).
     if not a.model and not a.model_dir \
@@ -1135,7 +1258,10 @@ def _plan_from_args(argv: Optional[List[str]] = None):
                         f"model {a.model} is not on {nd.host} "
                         f"(present on: {', '.join(bbreg.model_hosts(reg, a.model))})")
                 nd.model_dir = host_model
-                nd.python_bin = bbreg.node_meta(reg, nd.host).get("python") or ""
+                meta = bbreg.node_meta(reg, nd.host)
+                nd.python_bin = meta.get("python") or ""
+                if meta.get("user"):         # the node's own ssh user (the capacity split always used it; v0.2.1: every mode)
+                    nd.user = site.check_user(meta["user"], f"node {nd.rank} ssh user (registry)")
             if a.node_models and i < len(a.node_models):
                 nd.model_dir = a.node_models[i]
             if a.node_pythons and i < len(a.node_pythons):
@@ -1248,15 +1374,19 @@ def _plan_from_args(argv: Optional[List[str]] = None):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    plan = plan_from_args(argv)
+    try:
+        plan = plan_from_args(argv)
+    except ValueError as e:              # a host or user name that is not one (NodeSpec), a malformed --node / --gpus
+        print(f"bigbrain-controller: error: {e}", file=sys.stderr)
+        return 2
     problems = plan.validate()
     print(f"model: {plan.model_dir}  blocks: {plan.total_blocks}  nodes: {len(plan.nodes)}")
     for i, cmd in enumerate(plan.build_commands()):
-        print(f"  node {i}: {cmd}")
+        print(redact(f"  node {i}: {cmd}", plan.api_token))
     if problems:
         print("PROBLEMS:")
         for pr in problems:
-            print(f"  - {pr}")
+            print(redact(f"  - {pr}", plan.api_token))
         return 2
     if plan.execute:
         print("EXECUTING: staging + launching the cluster over ssh")

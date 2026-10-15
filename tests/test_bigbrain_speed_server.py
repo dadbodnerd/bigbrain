@@ -244,11 +244,12 @@ def test_serving_flags_on_the_worker_command_line_hand_over_to_the_server(monkey
 
 def test_api_token_flag_beats_file_and_env(tmp_path, monkeypatch):
     f = tmp_path / "k"
-    f.write_text("from-file")
-    monkeypatch.setenv("BIGBRAIN_API_KEY", "from-env")
-    assert srv.resolve_api_key(str(f), "BIGBRAIN_API_KEY", False, token="from-flag") == "from-flag"
-    assert srv.resolve_api_key(str(f), "BIGBRAIN_API_KEY", False) == "from-file"
-    assert srv.resolve_api_key(None, "BIGBRAIN_API_KEY", False) == "from-env"
+    # keys of at least MIN_API_KEY_LENGTH (16) characters since v0.2.1
+    f.write_text("from-file-0123456789")
+    monkeypatch.setenv("BIGBRAIN_API_KEY", "from-env-0123456789")
+    assert srv.resolve_api_key(str(f), "BIGBRAIN_API_KEY", False, token="from-flag-0123456789") == "from-flag-0123456789"
+    assert srv.resolve_api_key(str(f), "BIGBRAIN_API_KEY", False) == "from-file-0123456789"
+    assert srv.resolve_api_key(None, "BIGBRAIN_API_KEY", False) == "from-env-0123456789"
 
 
 def test_the_shipped_speed_flags_file_works_with_a_launch_scripts_formatting():

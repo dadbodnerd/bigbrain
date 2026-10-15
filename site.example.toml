@@ -2,7 +2,7 @@
 # Copyright (c) 2026 dadbodnerd
 #
 # BigBrain site configuration: everything that belongs to YOUR network and not to the engine. Fake values (10.0.0.x,
-# user "bigbrain"). Copy this file to site.toml in the directory you run BigBrain from, or point $BIGBRAIN_SITE at it, and edit
+# user "bigbrain"). Copy this file to ~/.config/bigbrain/site.toml, or anywhere and point $BIGBRAIN_SITE at it, and edit
 # the copy. site.toml is git-ignored. Every key is optional; an unknown key is an error. CONFIGURATION.md describes each one.
 
 [ssh]

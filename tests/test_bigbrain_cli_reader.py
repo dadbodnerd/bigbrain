@@ -126,7 +126,7 @@ def test_the_capacity_split_accepts_slots_and_a_serve_port_together(registry_env
     monkeypatch.setattr(ctl, "_cli_free_mib", lambda reg_, cards: {c: 24000 for c in cards})
     plan = ctl.plan_from_args(["--model", "M", "--gpus", "a:0", "--gpus", "b:0", "--ctx", "1024",
                                "--node-overhead-mib", "0", "--headroom-mib", "0",
-                               "--slots", "4", "--serve-port", "16980", "--api-token", "T"])
-    assert (plan.http_port, plan.api_token, plan.slots) == (16980, "T", 4)
+                               "--slots", "4", "--serve-port", "16980", "--api-token", "T0K-0123456789abcdef"])
+    assert (plan.http_port, plan.api_token, plan.slots) == (16980, "T0K-0123456789abcdef", 4)
     assert plan.validate() == []
     assert "--http-port 16980" in plan.build_commands()[0] and "--slots 4" in plan.build_commands()[1]

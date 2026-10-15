@@ -74,11 +74,14 @@ def test_an_env_var_pointing_nowhere_is_an_error_that_names_the_variable(tmp_pat
     assert "BIGBRAIN_SITE" in str(e.value) and "gone.toml" in str(e.value)
 
 
-def test_a_site_toml_in_the_current_directory_is_found(tmp_path, monkeypatch):
+def test_a_site_toml_in_the_current_directory_is_named_but_not_read(tmp_path, monkeypatch, capsys):
+    """v0.2.1 (security review S8): only $BIGBRAIN_SITE or ~/.config/bigbrain/site.toml; ./site.toml is reported, not used."""
     (tmp_path / "site.toml").write_text('[ssh]\nuser = "carol"\n', encoding="utf-8")
     monkeypatch.setattr(site, "SITE_FILE", "site.toml")
     monkeypatch.chdir(tmp_path)
-    assert site.path() == tmp_path / "site.toml" and site.ssh_user() == "carol"
+    site._warned.clear()
+    assert site.path() is None and site.ssh_user() != "carol"
+    assert "BIGBRAIN_SITE" in capsys.readouterr().err
 
 
 def test_an_edited_file_is_read_again(site_file):

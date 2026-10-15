@@ -6,9 +6,14 @@ A field may be **added** to any answer in later versions; none is renamed or rem
 ## Auth
 
 Every route except `GET /health` needs `Authorization: Bearer <key>` (or an `x-api-key: <key>` header), compared with
-`secrets.compare_digest`. The key comes from `--api-token` (what the controller passes; visible in `ps`), else `--api-key-file`, else the
-environment variable named by `--api-key-env` (default `BIGBRAIN_API_KEY`). With none of them the server refuses to start, unless you pass
-`--insecure-no-auth` (loopback tests only). Prefer `--api-key-file` when you launch by hand. There is no TLS: see SECURITY.md.
+`secrets.compare_digest`. The key comes from `--api-key-file` (what the controller passes: it stages the key as `api_key`, mode 0600, in
+node 0's stage directory), else the deprecated `--api-token` (visible in `ps`), else the environment variable named by `--api-key-env`
+(default `BIGBRAIN_API_KEY`); it must be at least 16 characters. With none of them the server refuses to start, unless you pass
+`--insecure-no-auth`, which is accepted only with a loopback `--host`. There is no TLS: see SECURITY.md.
+
+Before auth: the server holds at most `--max-connections` (default 64) connections at once and answers any more with a 503 straight
+away; a connection silent for `--conn-timeout` seconds (default 60) is dropped. When the pipeline is down, every request gets a 503
+(`the pipeline is down: ...`) at once.
 
 ## Routes
 
@@ -29,11 +34,12 @@ Anything else answers 404, a bad or missing key 401, a malformed body 400, a bod
 
 `temperature`, `top_p`, `top_k`, `min_p`, `seed`, `max_tokens` / `max_completion_tokens`, `stop`, `stream` and
 `stream_options.include_usage`, `chat_template_kwargs`, and `tools` (passed to the chat template only: **tool calls are not parsed from the
-output**). `n` must be 1 and `logprobs` are refused (400). Messages must be text (a list of text parts is joined).
+output**). `n` must be 1 and `logprobs` are refused (400). `stop` takes at most 16 strings of at most 256 characters each (400 otherwise). Messages must be text (a list of text parts is joined).
 When the request gives no sampling value the server uses the model folder's `generation_config.json` (`do_sample: false` means greedy).
 
 The chat template is `chat_template.jinja` in the model folder, else `tokenizer_config.json`'s `chat_template`, rendered with jinja2 in a
-sandbox the way transformers does. With no template or no jinja2 it falls back to ChatML, which is exact for the Qwen family only.
+sandbox the way transformers does. With no template or no jinja2 it falls back to ChatML, which is exact for the Qwen family only. A
+jinja2 older than 3.1.6 is refused: node 0 does not start (its sandbox has published escapes).
 
 Extensions on any route:
 
@@ -60,7 +66,9 @@ Open. `200` with `"status": "ok"` when the engine is ready and the scheduler is 
 `chat_template`, `stats` (the record of `/v1/bigbrain/stats` without `recent`) and `engine`. In batched mode `engine` is
 `{ok, nodes, links {outbound, token_link: "ok" | "dead"}, recurrent, batched, ready, slots, active, queued, dead, spec, inflight_cap}`
 (plus `tokens_per_s` and `active` at the top level); in single-sequence mode `{ok, nodes, links, recurrent, batched: false}`. It stays 503 until the
-handshake succeeds, and reports `engine.dead` (503) when a link died, a step timed out, or the handshake never completed.
+handshake succeeds, and reports `engine.dead` (503) when a link died, a peer sent a malformed frame, a step timed out, or the handshake
+never completed. Without the key, `engine.dead` only says that the pipeline is down; send the key with the request to read the reason
+(it can name peers, addresses and paths).
 
 ### `GET /v1/bigbrain/metrics`
 
@@ -94,7 +102,8 @@ the per-request decode rates. `finish` is `stop`, `length`, `cancelled` or `erro
 
 ## Flags that shape the endpoint
 
-`--http-port`, `--host`, `--model-name`, `--api-token` / `--api-key-file` / `--api-key-env` / `--insecure-no-auth`, `--slots N` (alias
+`--http-port`, `--host`, `--model-name`, `--api-key-file` / `--api-key-env` / `--api-token` / `--insecure-no-auth`, `--max-connections`,
+`--conn-timeout`, `--slots N` (alias
 `--max-batch-size`, the larger wins), `--max-draft K`, `--spec-draft none|ngram|model`, `--spec-k`, `--spec-model DIR`, `--draft-device`,
 `--ngram-min` / `--ngram-max`, `--inflight`, `--mb-size`, `--prefill-window`, `--hello-timeout`, `--token-timeout`, `--no-async-send`,
 `--diag`, `--queue-size`, `--retry-after`, `--default-max-tokens`, and on every node `--watchdog-s` (default 5.0). CONFIGURATION.md lists
